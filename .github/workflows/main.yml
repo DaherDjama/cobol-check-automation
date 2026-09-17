@@ -1,3 +1,4 @@
+
 name: COBOL Check Automation
 
 on:
@@ -15,13 +16,20 @@ jobs:
         uses: actions/setup-java@v2
         with:
           java-version: '11'
+          distribution: 'temurin'
       
-      - name: Run COBOL Check
+      - name: Setup Mainframe Environment and Upload COBOL Check
         env:
           ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
           ZOWE_PASSWORD: ${{ secrets.ZOWE_PASSWORD }}
         run: |
-          echo "Running COBOL Check"
-          # We'll add the actual cobolcheck commands here
           chmod +x .github/scripts/zowe_operations.sh
           .github/scripts/zowe_operations.sh
+      
+      - name: Run COBOL Check on Mainframe
+        env:
+          ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
+          ZOWE_PASSWORD: ${{ secrets.ZOWE_PASSWORD }}
+        run: |
+          chmod +x .github/scripts/mainframe_operations.sh
+          .github/scripts/mainframe_operations.sh
