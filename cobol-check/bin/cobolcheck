@@ -1,0 +1,7 @@
+#!/bin/bash
+# COBOL Check executable wrapper script
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+COBOL_CHECK_JAR="$SCRIPT_DIR/cobol-check-0.2.19.jar"
+
+java -jar "$COBOL_CHECK_JAR" "$@"
