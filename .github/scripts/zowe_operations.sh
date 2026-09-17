@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 # Convert username to lowercase
