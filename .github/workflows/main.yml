@@ -1,3 +1,4 @@
+
 name: COBOL Check Automation
 
 on:
@@ -7,6 +8,8 @@ on:
 jobs:
   cobol-check:
     runs-on: ubuntu-latest
+    container:
+      image: zowe/zowe-cli:latest
     
     steps:
       - uses: actions/checkout@v2
@@ -16,11 +19,6 @@ jobs:
         with:
           java-version: '11'
           distribution: 'temurin'
-      
-      - name: Install Zowe CLI
-        run: |
-          npm install -g @zowe/cli
-          zowe --version
       
       - name: Configure Zowe Profile
         env:
