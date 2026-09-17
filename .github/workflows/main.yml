@@ -27,17 +27,17 @@ jobs:
           npm install -g @zowe/cli@7.26.0
           zowe --version
           
-      - name: Install Zowe System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsecret-1-0 libsecret-1-dev
-
-      - name: Configure Zowe Profile
+      - name: Configure Zowe with Plain Text Credentials
         env:
           ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
           ZOWE_PASSWORD: ${{ secrets.ZOWE_PASSWORD }}
         run: |
-          zowe profiles create zosmf-profile zosmf --host 204.90.115.200 --port 443 --user $ZOWE_USERNAME --password $ZOWE_PASSWORD --reject-unauthorized false --secure false
+          # Initialize Zowe config
+          zowe config init
+          # Create zosmf profile with credentials stored in plain text
+          zowe profiles create zosmf-profile zosmf --host 204.90.115.200 --port 443 --user $ZOWE_USERNAME --password $ZOWE_PASSWORD --reject-unauthorized false --type zosmf
+          # Set secure credentials to false globally
+          zowe config set secure-credentials false
           
       - name: Setup Mainframe Environment and Upload COBOL Check
         env:
