@@ -27,6 +27,11 @@ jobs:
           npm install -g @zowe/cli@7.26.0
           zowe --version
           
+      - name: Install Zowe System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-0 libsecret-1-dev
+
       - name: Configure Zowe Profile
         env:
           ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
