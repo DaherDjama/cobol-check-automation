@@ -27,14 +27,6 @@ jobs:
           npm install -g @zowe/cli@7.26.0
           zowe --version
           
-      - name: Configure Zowe Profile (V1)
-        env:
-          ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
-          ZOWE_PASSWORD: ${{ secrets.ZOWE_PASSWORD }}
-        run: |
-          zowe profiles create zosmf-profile zosmf --host 204.90.115.200 --port 443 --user $ZOWE_USERNAME --password $ZOWE_PASSWORD --reject-unauthorized false
-          zowe profiles set-default zosmf zosmf
-          
       - name: Setup Mainframe Environment and Upload COBOL Check
         env:
           ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
