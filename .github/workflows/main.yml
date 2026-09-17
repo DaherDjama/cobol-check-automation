@@ -37,7 +37,7 @@ jobs:
           ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
           ZOWE_PASSWORD: ${{ secrets.ZOWE_PASSWORD }}
         run: |
-          zowe profiles create zosmf-profile zosmf --host 204.90.115.200 --port 443 --user $ZOWE_USERNAME --password $ZOWE_PASSWORD --reject-unauthorized false
+          zowe config init zosmf --host 204.90.115.200 --port 443 --user $ZOWE_USERNAME --password $ZOWE_PASSWORD --reject-unauthorized false --secure false
           
       - name: Setup Mainframe Environment and Upload COBOL Check
         env:
