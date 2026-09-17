@@ -1,4 +1,3 @@
-
 #!/bin/bash
 # mainframe_operations.sh
 
@@ -12,11 +11,12 @@ java -version
 # Set ZOWE_USERNAME 
 ZOWE_USERNAME="Z89674"
 
-# We're already in the cobol-check directory from the workflow
-echo "Current directory: $(pwd)"
+# Change to the cobol-check directory
+cd cobol-check
+echo "Changed to $(pwd)"
 ls -al
 
-# Make cobolcheck executable (it's in the bin folder)
+# Make cobolcheck executable
 chmod +x bin/cobolcheck
 echo "Made cobolcheck executable"
 
@@ -42,7 +42,7 @@ run_cobolcheck(){
         echo "CC##99.CBL not found for $program"
     fi
     
-    # Copy the JCL file if it exists (it's in the root repo, not in cobol-check folder)
+    # Copy the JCL file if it exists (it's in the parent directory)
     if [ -f "../${program}.JCL" ]; then
         cp ../${program}.JCL "//'${ZOWE_USERNAME}.JCL($program)'"
         echo "Copied ${program}.JCL to ${ZOWE_USERNAME}.JCL($program)"
