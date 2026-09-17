@@ -27,17 +27,13 @@ jobs:
           npm install -g @zowe/cli@7.26.0
           zowe --version
           
-      - name: Configure Zowe with Plain Text Credentials
+      - name: Configure Zowe Profile (V1)
         env:
           ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
           ZOWE_PASSWORD: ${{ secrets.ZOWE_PASSWORD }}
         run: |
-          # Initialize Zowe config
-          zowe config init
-          # Disable secure credentials globally BEFORE creating profile
-          zowe config set secure-credentials false
-          # Now create the profile (will use plain text)
-          zowe profiles create zosmf-profile zosmf --host 204.90.115.200 --port 443 --user $ZOWE_USERNAME --password $ZOWE_PASSWORD --reject-unauthorized false
+          zowe profiles create zosmf-profile zosmf --host 204.90.115.200 --port 443 --user $ZOWE_USERNAME --password $ZOWE_PASSWORD --reject-unauthorized false --secure false
+          zowe profiles set-default zosmf zosmf
           
       - name: Setup Mainframe Environment and Upload COBOL Check
         env:
