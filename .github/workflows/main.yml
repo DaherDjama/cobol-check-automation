@@ -24,7 +24,7 @@ jobs:
           
       - name: Install Zowe CLI
         run: |
-          npm install -g @zowe/cli@7.34.0
+          npm install -g @zowe/cli@7.26.0
           zowe --version
           
       - name: Configure Zowe Profile
