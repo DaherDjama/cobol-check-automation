@@ -1,0 +1,27 @@
+name: COBOL Check Automation
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  cobol-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Set up Java
+        uses: actions/setup-java@v2
+        with:
+          java-version: '11'
+      
+      - name: Run COBOL Check
+        env:
+          ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
+          ZOWE_PASSWORD: ${{ secrets.ZOWE_PASSWORD }}
+        run: |
+          echo "Running COBOL Check"
+          # We'll add the actual cobolcheck commands here
+          chmod +x .github/scripts/zowe_operations.sh
+          .github/scripts/zowe_operations.sh
