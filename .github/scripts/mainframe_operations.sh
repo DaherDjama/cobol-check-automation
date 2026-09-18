@@ -1,3 +1,4 @@
+
 #!/bin/bash
 # mainframe_operations.sh
 
@@ -10,18 +11,24 @@ if [ -z "$ZOWE_USERNAME" ]; then
 fi
 
 echo "Current directory: $(pwd)"
-ls -al
 
-# Copy config to root
+# 1. Copy config and SCRIPTS to the root directory
 cp cobol-check/config.properties .
+cp -r cobol-check/scripts .   # <--- THIS FIXES THE "No such file" ERROR
+chmod -R +x scripts/          # Make sure the script is executable
 
-# Make executable
+# Make cobolcheck binary executable
 chmod +x cobol-check/bin/cobolcheck
 
 for program in NUMBERS EMPPAY DEPTPAY; do
-    echo "Running for $program"
+    echo "----------------------------------------"
+    echo "Processing: $program"
+    echo "----------------------------------------"
+    
+    # Run COBOL Check from root
     ./cobol-check/bin/cobolcheck -p $program
     
+    # Upload results
     if [ -f "CC##99.CBL" ]; then
         zowe zos-files upload file-to-data-set "CC##99.CBL" "${ZOWE_USERNAME}.CBL(${program})" \
             --host 204.90.115.200 --port 443 \
@@ -38,5 +45,4 @@ for program in NUMBERS EMPPAY DEPTPAY; do
 done
 
 echo "Mainframe operations completed"
-
 
