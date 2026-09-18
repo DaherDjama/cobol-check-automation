@@ -1,0 +1,13 @@
+TestSuite 'Simple arithmetic operations'
+
+TestCase 'Addition test - result should be 15'
+    MOVE 5 TO NUM1
+    MOVE 10 TO NUM2
+    PERFORM CALCULATE
+    EXPECT RESULT TO BE 15
+
+TestCase 'Addition test with different values'
+    MOVE 100 TO NUM1
+    MOVE 200 TO NUM2
+    PERFORM CALCULATE
+    EXPECT RESULT TO BE 300
