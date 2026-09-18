@@ -33,25 +33,25 @@ jobs:
           npm install -g @zowe/cli@7.26.0
           zowe --version
 
-      - name: 🔍 DIAGNOSTIC: Test Mainframe Connectivity
+      - name:  DIAGNOSTIC: Test Mainframe Connectivity
         run: |
           echo "========================================="
           echo "Testing connectivity to 204.90.115.200"
           echo "========================================="
           
           echo "1. Testing Port 443 (HTTPS / z/OSMF REST API)..."
-          if timeout 10 bash -c 'cat < /dev/null > /dev/tcp/204.90.115.200/443' 2>/dev/null; then
-            echo "✅ SUCCESS: Port 443 is OPEN and reachable from GitHub Actions."
+          if timeout 10 bash -c 'echo > /dev/tcp/204.90.115.200/443' 2>/dev/null; then
+            echo "SUCCESS: Port 443 is OPEN and reachable from GitHub Actions."
           else
-            echo "❌ FAILED: Port 443 is BLOCKED or unreachable (ECONNREFUSED)."
+            echo "FAILED: Port 443 is BLOCKED or unreachable (ECONNREFUSED)."
           fi
           
           echo ""
           echo "2. Testing Port 22 (SSH)..."
-          if timeout 10 bash -c 'cat < /dev/null > /dev/tcp/204.90.115.200/22' 2>/dev/null; then
-            echo "✅ SUCCESS: Port 22 is OPEN and reachable."
+          if timeout 10 bash -c 'echo > /dev/tcp/204.90.115.200/22' 2>/dev/null; then
+            echo "SUCCESS: Port 22 is OPEN and reachable."
           else
-            echo "❌ FAILED: Port 22 is also blocked."
+            echo "FAILED: Port 22 is also blocked."
           fi
           
           echo ""
