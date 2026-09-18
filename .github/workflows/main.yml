@@ -1,4 +1,3 @@
-
 name: COBOL Check Automation
 
 on:
@@ -16,7 +15,7 @@ jobs:
         uses: actions/setup-java@v2
         with:
           java-version: '11'
-          distribution: 'temurin'
+          distribution: 'temurin'  # This line is critical!
           
       - name: Set up Node.js
         uses: actions/setup-node@v3
