@@ -1,48 +1,50 @@
-
 #!/bin/bash
-# mainframe_operations.sh
+# mainframe_operations.sh - Run tests on mainframe via SSH
 
-export PATH=$PATH:/usr/lpp/java/J8.0_64/bin
-export JAVA_HOME=/usr/lpp/java/J8.0_64
-java -version
+set -e
 
-if [ -z "$ZOWE_USERNAME" ]; then
-    ZOWE_USERNAME="Z89674"
-fi
+# Convert username to lowercase
+LOWERCASE_USERNAME=$(echo "$ZOWE_USERNAME" | tr '[:upper:]' '[:lower:]')
 
-echo "Current directory: $(pwd)"
+# Create temporary file for SSH key
+echo "$SSH_PRIVATE_KEY" > /tmp/github_actions_key
+chmod 600 /tmp/github_actions_key
 
-# 1. Copy config and SCRIPTS to the root directory
-cp cobol-check/config.properties .
-cp -r cobol-check/scripts .   # <--- THIS FIXES THE "No such file" ERROR
-chmod -R +x scripts/          # Make sure the script is executable
+echo "Running COBOL Check on mainframe via SSH..."
 
-# Make cobolcheck binary executable
-chmod +x cobol-check/bin/cobolcheck
-
-for program in NUMBERS EMPPAY DEPTPAY; do
-    echo "----------------------------------------"
-    echo "Processing: $program"
-    echo "----------------------------------------"
+# Execute commands directly on the mainframe
+ssh -i /tmp/github_actions_key -o StrictHostKeyChecking=no "${LOWERCASE_USERNAME}@204.90.115.200" << EOF
+    cd /z/${LOWERCASE_USERNAME}/cobolcheck/cobol-check
     
-    # Run COBOL Check from root
-    ./cobol-check/bin/cobolcheck -p $program
+    # Make tools executable
+    chmod +x bin/cobolcheck
+    chmod +x scripts/linux_gnucobol_run_tests
+    cp config.properties .
     
-    # Upload results
-    if [ -f "CC##99.CBL" ]; then
-        zowe zos-files upload file-to-data-set "CC##99.CBL" "${ZOWE_USERNAME}.CBL(${program})" \
-            --host 204.90.115.200 --port 443 \
-            --user "$ZOWE_USERNAME" --password "$ZOWE_PASSWORD" \
-            --reject-unauthorized false
-    fi
-    
-    if [ -f "${program}.JCL" ]; then
-        zowe zos-files upload file-to-data-set "${program}.JCL" "${ZOWE_USERNAME}.JCL(${program})" \
-            --host 204.90.115.200 --port 443 \
-            --user "$ZOWE_USERNAME" --password "$ZOWE_PASSWORD" \
-            --reject-unauthorized false
-    fi
-done
+    # Loop through programs
+    for program in NUMBERS EMPPAY DEPTPAY; do
+        echo "----------------------------------------"
+        echo "Processing: \$program"
+        echo "----------------------------------------"
+        
+        # Run the test
+        ./bin/cobolcheck -p \$program
+        
+        # Copy results to MVS datasets
+        if [ -f "CC##99.CBL" ]; then
+            cp CC##99.CBL "'//${ZOWE_USERNAME}.CBL(\$program)'"
+            echo "Copied CC##99.CBL to ${ZOWE_USERNAME}.CBL(\$program)"
+        fi
+        
+        if [ -f "../\${program}.JCL" ]; then
+            cp ../\${program}.JCL "'//${ZOWE_USERNAME}.JCL(\$program)'"
+            echo "Copied \${program}.JCL to ${ZOWE_USERNAME}.JCL(\$program)"
+        fi
+    done
+EOF
 
-echo "Mainframe operations completed"
+# Clean up
+rm -f /tmp/github_actions_key
+
+echo "Mainframe operations completed!"
 
