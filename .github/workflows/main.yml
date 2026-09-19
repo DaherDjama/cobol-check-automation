@@ -36,7 +36,7 @@ jobs:
       - name: Setup Mainframe Environment and Upload COBOL Check
         env:
           ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
-          ZOWE_PASSWORD: ${{ secrets.ZOWE_PASSWORD }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           chmod +x .github/scripts/zowe_operations.sh
           .github/scripts/zowe_operations.sh
@@ -44,7 +44,7 @@ jobs:
       - name: Run COBOL Check on Mainframe
         env:
           ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
-          ZOWE_PASSWORD: ${{ secrets.ZOWE_PASSWORD }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           chmod +x .github/scripts/mainframe_operations.sh
           .github/scripts/mainframe_operations.sh
