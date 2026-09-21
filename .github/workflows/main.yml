@@ -10,32 +10,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
-      - name: Create Directory on Mainframe
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          password: ${{ secrets.SSH_PASSWORD }}
-          script: |
-            mkdir -p /z/${{ secrets.SSH_USERNAME }}/cobolcheck
-
-      - name: Upload Source Files
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          password: ${{ secrets.SSH_PASSWORD }}
-          source: "src"
-          target: "/z/${{ secrets.SSH_USERNAME }}/cobolcheck"
-          overwrite: true
-
-      - name: Test Connection
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          password: ${{ secrets.SSH_PASSWORD }}
-          script: |
-            echo "✅ Successfully connected to mainframe!"
-            cd /z/${{ secrets.SSH_USERNAME }}/cobolcheck
-            ls -la
+      - name: Install SSH tools
+        run: sudo apt-get install -y sshpass
+      
+      - name: Create Directory
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
+            "mkdir -p /z/${{ secrets.SSH_USERNAME }}/cobolcheck"
+      
+      - name: Upload Files
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no -r \
+            ./src \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/
+      
+      - name: Verify Upload
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
+            "cd /z/${{ secrets.SSH_USERNAME }}/cobolcheck && ls -la"
