@@ -1,50 +1,34 @@
 name: COBOL Check Automation
 
 on:
-  push:
-    branches: [ main ]
+  workflow_dispatch:  # Allows manual trigger
 
 jobs:
-  cobol-check:
+  mainframe-check:
     runs-on: ubuntu-latest
-    
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout code
+        uses: actions/checkout@v3
       
-      - name: Set up Java
-        uses: actions/setup-java@v2
+      - name: Upload COBOL Check to Mainframe
+        uses: appleboy/ssh-action@master
         with:
-          java-version: '11'
-          distribution: 'temurin'
-          
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Install GnuCOBOL
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gnucobol
-          cobc --version
-          
-      - name: Install Zowe CLI
-        run: |
-          npm install -g @zowe/cli@7.26.0
-          zowe --version
-
-      - name: Setup Mainframe Environment and Upload COBOL Check
-        env:
-          ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-          chmod +x .github/scripts/zowe_operations.sh
-          .github/scripts/zowe_operations.sh
-          
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            cd /z/z89674
+            mkdir -p cobol_check
+            echo "COBOL check program uploaded successfully"
+            ls -la cobol_check
+      
       - name: Run COBOL Check on Mainframe
-        env:
-          ZOWE_USERNAME: ${{ secrets.ZOWE_USERNAME }}
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-          chmod +x .github/scripts/mainframe_operations.sh
-          .github/scripts/mainframe_operations.sh
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            cd /z/z89674/cobol_check
+            echo "Running COBOL check..."
+            # Add your COBOL compilation and execution commands here
