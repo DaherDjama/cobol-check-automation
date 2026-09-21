@@ -1,4 +1,3 @@
-
 name: COBOL Check Automation
 
 on:
@@ -11,23 +10,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
-      - name: Upload Files to Mainframe
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          password: ${{ secrets.SSH_PASSWORD }}
-          source: "cobol-check,src,*.JCL"
-          target: "/z/${{ secrets.SSH_USERNAME }}/cobolcheck"
-          overwrite: true
-
-      - name: Run Commands on Mainframe
+      - name: Create Directory on Mainframe
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
-            echo "Successfully connected!"
+            mkdir -p /z/${{ secrets.SSH_USERNAME }}/cobolcheck
+
+      - name: Upload Source Files
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          source: "src"
+          target: "/z/${{ secrets.SSH_USERNAME }}/cobolcheck"
+          overwrite: true
+
+      - name: Test Connection
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            echo "✅ Successfully connected to mainframe!"
             cd /z/${{ secrets.SSH_USERNAME }}/cobolcheck
             ls -la
