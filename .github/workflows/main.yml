@@ -10,25 +10,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
-      - name: Upload COBOL Check to Mainframe
+      - name: Install SSH Pass (for SCP action)
+        run: sudo apt-get install -y sshpass
+
+      # STEP 1: UPLOAD FILES TO MAINFRAME
+      - name: Upload COBOL Check and Source to Mainframe
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          # Upload the cobol-check folder, src folder, and any JCL files
+          source: "cobol-check,src,*.JCL" 
+          target: "/z/${{ secrets.SSH_USERNAME }}/cobolcheck"
+          overwrite: true
+          strip_components: 0
+
+      # STEP 2: RUN COMMANDS ON MAINFRAME
+      - name: Setup and Run on Mainframe
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
-            cd /z/z89674
-            mkdir -p cobol_check
-            echo "COBOL check program uploaded successfully"
-            ls -la cobol_check
-      
-      - name: Run COBOL Check on Mainframe
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          password: ${{ secrets.SSH_PASSWORD }}
-          script: |
-            cd /z/z89674/cobol_check
-            echo "Running COBOL check..."
-            # Add your COBOL compilation and execution commands here
+            echo "Connected successfully!"
+            cd /z/${{ secrets.SSH_USERNAME }}/cobolcheck
+            ls -la
+            echo "Files uploaded. Ready to compile/run COBOL."
+            # Add your compilation commands here later
