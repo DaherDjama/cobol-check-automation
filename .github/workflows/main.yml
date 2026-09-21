@@ -13,20 +13,20 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
       
-      - name: Create Directory
+      - name: Create Directories
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
             ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
-            "mkdir -p /z/${{ secrets.SSH_USERNAME }}/cobolcheck"
+            "mkdir -p /z/${{ secrets.SSH_USERNAME }}/cobolcheck/src"
       
       - name: Upload Files
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no -r \
-            ./src \
-            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/
+            ./src/* \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/src/
       
       - name: Verify Upload
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
             ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
-            "cd /z/${{ secrets.SSH_USERNAME }}/cobolcheck && ls -la"
+            "ls -la /z/${{ secrets.SSH_USERNAME }}/cobolcheck/src"
