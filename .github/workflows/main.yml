@@ -14,30 +14,20 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
       
-      - name: Create Directories
+      - name: Create Base Directory
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
             ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
-            "mkdir -p /z/${{ secrets.SSH_USERNAME }}/cobolcheck/main /z/${{ secrets.SSH_USERNAME }}/cobolcheck/test"
+            "mkdir -p /z/${{ secrets.SSH_USERNAME }}/cobolcheck"
       
-      - name: Upload Main COBOL Files
+      - name: Upload Entire src Folder
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no \
-            ./src/main/cobol/DEPTPAY \
-            ./src/main/cobol/EMPPAY \
-            ./src/main/cobol/NUMBERS \
-            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/main/
-      
-      - name: Upload Test COBOL Files
-        run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no \
-            ./src/test/cobol/DEPTPAY \
-            ./src/test/cobol/EMPPAY \
-            ./src/test/cobol/NUMBERS \
-            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/test/
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no -r \
+            ./src \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/
       
       - name: Verify Upload
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
             ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
-            "ls -la /z/${{ secrets.SSH_USERNAME }}/cobolcheck/main /z/${{ secrets.SSH_USERNAME }}/cobolcheck/test"
+            "ls -laR /z/${{ secrets.SSH_USERNAME }}/cobolcheck"
