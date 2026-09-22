@@ -17,16 +17,22 @@ jobs:
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
             ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
-            "mkdir -p /z/${{ secrets.SSH_USERNAME }}/cobolcheck/src"
+            "mkdir -p /z/${{ secrets.SSH_USERNAME }}/cobolcheck/src/main/cobol /z/${{ secrets.SSH_USERNAME }}/cobolcheck/src/test/cobol"
       
-      - name: Upload Files
+      - name: Upload Main COBOL Files
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no -r \
-            ./src/* \
-            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/src/
+            ./src/main/cobol/* \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/src/main/cobol/
+      
+      - name: Upload Test COBOL Files
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no -r \
+            ./src/test/cobol/* \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/src/test/cobol/
       
       - name: Verify Upload
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
             ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
-            "ls -la /z/${{ secrets.SSH_USERNAME }}/cobolcheck/src"
+            "ls -laR /z/${{ secrets.SSH_USERNAME }}/cobolcheck/src"
