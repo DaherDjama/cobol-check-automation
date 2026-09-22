@@ -1,3 +1,4 @@
+
 name: COBOL Check Automation
 
 on:
@@ -17,22 +18,26 @@ jobs:
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
             ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
-            "mkdir -p /z/${{ secrets.SSH_USERNAME }}/cobolcheck/src/main/cobol /z/${{ secrets.SSH_USERNAME }}/cobolcheck/src/test/cobol"
+            "mkdir -p /z/${{ secrets.SSH_USERNAME }}/cobolcheck/main /z/${{ secrets.SSH_USERNAME }}/cobolcheck/test"
       
       - name: Upload Main COBOL Files
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no -r \
-            ./src/main/cobol/* \
-            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/src/main/cobol/
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no \
+            ./src/main/cobol/DEPTPAY \
+            ./src/main/cobol/EMPPAY \
+            ./src/main/cobol/NUMBERS \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/main/
       
       - name: Upload Test COBOL Files
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no -r \
-            ./src/test/cobol/* \
-            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/src/test/cobol/
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no \
+            ./src/test/cobol/DEPTPAY \
+            ./src/test/cobol/EMPPAY \
+            ./src/test/cobol/NUMBERS \
+            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/test/
       
       - name: Verify Upload
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
             ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
-            "ls -laR /z/${{ secrets.SSH_USERNAME }}/cobolcheck/src"
+            "ls -la /z/${{ secrets.SSH_USERNAME }}/cobolcheck/main /z/${{ secrets.SSH_USERNAME }}/cobolcheck/test"
