@@ -1,4 +1,3 @@
-
 name: COBOL Check Automation
 
 on:
@@ -14,44 +13,31 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
       
-      - name: Solve SQL Challenge
+      - name: Create and Run SQL Java Program
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
           export JAVA_HOME=/usr/lpp/java/J8.0_64
           export JDBC=/usr/lpp/db2d10/jdbc/classes/db2jcc4.jar
           
-          echo '--- CREATING JAVA PROGRAM ---'
-          cat > /tmp/RunSQL.java << JAVAEOF
-          import java.sql.*;
-          public class RunSQL {
-              public static void main(String[] args) throws Exception {
-                  Class.forName(\"com.ibm.db2.jcc.DB2Driver\");
-                  Connection c = DriverManager.getConnection(\"jdbc:db2://204.90.115.200:5040/ZXPDB2\", \"${{ secrets.SSH_USERNAME }}\", \"${{ secrets.SSH_PASSWORD }}\");
-                  Statement s = c.createStatement();
-                  ResultSet r = s.executeQuery(\"SELECT D.DEPTNAME, MAX(COALESCE(E.SALARY,0) + COALESCE(E.BONUS,0) + COALESCE(E.COMM,0)) FROM IBMUSER.DEPT D, IBMUSER.EMP E WHERE D.DEPTNO = E.WORKDEPT GROUP BY D.DEPTNAME ORDER BY D.DEPTNAME\");
-                  System.out.println(\"DEPTNAME,MAX_COMPENSATION\");
-                  while(r.next()) {
-                      System.out.println(r.getString(1) + \",\" + r.getString(2));
-                  }
-                  c.close();
-              }
-          }
-          JAVAEOF
+          echo 'import java.sql.*;' > /tmp/RunSQL.java
+          echo 'public class RunSQL {' >> /tmp/RunSQL.java
+          echo '    public static void main(String[] args) throws Exception {' >> /tmp/RunSQL.java
+          echo '        Class.forName(\"com.ibm.db2.jcc.DB2Driver\");' >> /tmp/RunSQL.java
+          echo '        Connection c = DriverManager.getConnection(\"jdbc:db2://204.90.115.200:5040/ZXPDB2\", args[0], args[1]);' >> /tmp/RunSQL.java
+          echo '        Statement s = c.createStatement();' >> /tmp/RunSQL.java
+          echo '        ResultSet r = s.executeQuery(\"SELECT D.DEPTNAME, MAX(COALESCE(E.SALARY,0) + COALESCE(E.BONUS,0) + COALESCE(E.COMM,0)) AS MAX_COMPENSATION FROM IBMUSER.DEPT D, IBMUSER.EMP E WHERE D.DEPTNO = E.WORKDEPT GROUP BY D.DEPTNAME ORDER BY D.DEPTNAME\");' >> /tmp/RunSQL.java
+          echo '        System.out.println(\"DEPTNAME,MAX_COMPENSATION\");' >> /tmp/RunSQL.java
+          echo '        while(r.next()) { System.out.println(r.getString(1) + \",\" + r.getString(2)); }' >> /tmp/RunSQL.java
+          echo '        c.close();' >> /tmp/RunSQL.java
+          echo '    }' >> /tmp/RunSQL.java
+          echo '}' >> /tmp/RunSQL.java
           
-          echo '--- COMPILING ---'
+          echo '--- Compiling ---'
           \$JAVA_HOME/bin/javac -cp \$JDBC /tmp/RunSQL.java
           
-          echo '--- RUNNING QUERY AND SAVING CSV ---'
-          \$JAVA_HOME/bin/java -cp /tmp:\$JDBC RunSQL > /tmp/result.csv
+          echo '--- Running Query ---'
+          \$JAVA_HOME/bin/java -cp /tmp:\$JDBC RunSQL ${{ secrets.SSH_USERNAME }} ${{ secrets.SSH_PASSWORD }} > /tmp/result.csv
+          
+          echo '--- Results ---'
           cat /tmp/result.csv
-          
-          echo '--- UPLOADING TO DATASET ---'
-          # Copy the CSV file to the mainframe dataset member
-          cp /tmp/result.csv \"//'Z89674.OUTPUT(DB2OUT)'\"
-          echo 'Uploaded to Z89674.OUTPUT(DB2OUT)'
-          
-          echo '--- SUBMITTING CHECKER JOB ---'
-          # Submit the validation job
-          submit 'ZXP.PUBLIC.JCL(CHKSQL)'
-          echo 'Job submitted!'
           "
