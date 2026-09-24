@@ -13,17 +13,25 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
       
-      - name: Run SQL Query via Java
+      - name: Create SQL Script on Mainframe
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat > /tmp/run_sql.sh << 'EOF'
+          #!/bin/bash
           export JAVA_HOME=/usr/lpp/java/J8.0_64
           export CLASSPATH=/usr/lpp/db2d10/jdbc/classes/db2jcc4.jar
+          
+          SQL_QUERY='SELECT D.DEPTNAME, MAX(COALESCE(E.SALARY,0) + COALESCE(E.BONUS,0) + COALESCE(E.COMM,0)) AS MAX_COMPENSATION FROM IBMUSER.DEPT D, IBMUSER.EMP E WHERE D.DEPTNO = E.WORKDEPT GROUP BY D.DEPTNAME ORDER BY D.DEPTNAME;'
           
           echo '--- RUNNING QUERY ---'
           \$JAVA_HOME/bin/java com.ibm.db2.jcc.DB2Jcc \
             -url jdbc:db2://204.90.115.200:5040/ZXPDB2 \
             -user ${{ secrets.SSH_USERNAME }} \
             -password ${{ secrets.SSH_PASSWORD }} \
-            -sql 'SELECT D.DEPTNAME, MAX(COALESCE(E.SALARY,0) + COALESCE(E.BONUS,0) + COALESCE(E.COMM,0)) AS MAX_COMPENSATION FROM IBMUSER.DEPT D, IBMUSER.EMP E WHERE D.DEPTNO = E.WORKDEPT GROUP BY D.DEPTNAME ORDER BY D.DEPTNAME;'
+            -sql \"\$SQL_QUERY\"
           echo '--- END ---'
-          "
+          EOF
+          chmod +x /tmp/run_sql.sh"
+      
+      - name: Run SQL Query
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "/tmp/run_sql.sh"
