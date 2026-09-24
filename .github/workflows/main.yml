@@ -40,4 +40,8 @@ jobs:
           
           echo '--- Results ---'
           cat /tmp/result.csv
+          
+          echo '--- Uploading to Dataset ---'
+          cat /tmp/result.csv > '//Z89674.OUTPUT(DB2OUT)'
+          echo '--- Upload Complete ---'
           "
