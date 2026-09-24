@@ -13,28 +13,14 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
       
-      - name: Create Base Directory
-        run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
-            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
-            "mkdir -p /z/${{ secrets.SSH_USERNAME }}/cobolcheck"
-      
-      - name: Upload Entire src Folder
-        run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no -r \
-            ./src \
-            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/${{ secrets.SSH_USERNAME }}/cobolcheck/
-      
-      - name: Verify Upload
-        run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no \
-            ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
-            "ls -laR /z/${{ secrets.SSH_USERNAME }}/cobolcheck"
-
-      - name: Find Db2 Command Location
+      - name: Deep Search for Db2 and Python
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-          echo '--- SEARCHING FOR DB2 ---'
-          find /usr/lpp -name 'db2' -type f 2>/dev/null | head -5
-          echo '--- SEARCH END ---'
+          echo '--- CHECK PYTHON ---'
+          which python3
+          echo '--- SEARCH FOR JDBC DRIVER ---'
+          find /usr /opt /var -name '*db2jcc*.jar' 2>/dev/null | head -5
+          echo '--- READ PUBLIC JCL (ZOAU) ---'
+          dcat ZXP.PUBLIC.JCL(CHKSQL) 2>&1 | head -30
+          echo '--- END ---'
           "
