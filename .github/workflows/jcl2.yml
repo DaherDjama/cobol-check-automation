@@ -13,36 +13,34 @@ jobs:
       - name: List Files and Fix JCL
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-          echo '--- Listing files in ZXP.PUBLIC.SOURCE ---'
-          ls \"//'ZXP.PUBLIC.SOURCE'\" 2>&1 || echo 'ls failed, but continuing...'
-          
-          echo '--- Creating Fixed JCL in USS ---'
-          cat > /tmp/fixed_jcl.txt << 'JCLEOF'
-//JES2JOB1  JOB ,MSGLEVEL=(2,0),CLASS=7
-//COMBINE   EXEC PGM=IRXJCL,PARM='COMBINE'
-//SYSEXEC   DD DSN=ZXP.PUBLIC.EXEC,DISP=SHR
-//SYSTSPRT  DD DSN=&SYSUID..OUTPUT(GUITAR),DISP=SHR
-//SYSTSIN   DD DUMMY
-//NICKNAME  DD DSN=ZXP.PUBLIC.SOURCE(NICKNAME),DISP=SHR
-//BRAND     DD DSN=ZXP.PUBLIC.SOURCE(BRAND),DISP=SHR
-//MODEL     DD DSN=ZXP.PUBLIC.SOURCE(MODEL),DISP=SHR
-JCLEOF
-          
-          echo '--- Copying Fixed JCL to Mainframe Dataset ---'
-          cp /tmp/fixed_jcl.txt \"//'Z89674.JCL(JES2JOB1)'\"
-          
-          echo '--- Verifying Updated JCL ---'
-          cat \"//'Z89674.JCL(JES2JOB1)'\"
-          
-          echo '--- Submitting Fixed Job ---'
-          submit \"//'Z89674.JCL(JES2JOB1)'\"
-          echo 'Job submitted! Look for Completion Code 0000 in the logs.'
+            echo '--- Listing files in ZXP.PUBLIC.SOURCE ---'
+            ls \"//'ZXP.PUBLIC.SOURCE'\" 2>&1 || echo 'ls failed, but continuing...'
+            
+            echo '--- Creating Fixed JCL in USS ---'
+            echo '//JES2JOB1  JOB ,MSGLEVEL=(2,0),CLASS=7' > /tmp/fixed_jcl.txt
+            echo \"//COMBINE   EXEC PGM=IRXJCL,PARM='COMBINE'\" >> /tmp/fixed_jcl.txt
+            echo '//SYSEXEC   DD DSN=ZXP.PUBLIC.EXEC,DISP=SHR' >> /tmp/fixed_jcl.txt
+            echo '//SYSTSPRT  DD DSN=&SYSUID..OUTPUT(GUITAR),DISP=SHR' >> /tmp/fixed_jcl.txt
+            echo '//SYSTSIN   DD DUMMY' >> /tmp/fixed_jcl.txt
+            echo '//NICKNAME  DD DSN=ZXP.PUBLIC.SOURCE(NICKNAME),DISP=SHR' >> /tmp/fixed_jcl.txt
+            echo '//BRAND     DD DSN=ZXP.PUBLIC.SOURCE(BRAND),DISP=SHR' >> /tmp/fixed_jcl.txt
+            echo '//MODEL     DD DSN=ZXP.PUBLIC.SOURCE(MODEL),DISP=SHR' >> /tmp/fixed_jcl.txt
+            
+            echo '--- Copying Fixed JCL to Mainframe Dataset ---'
+            cp /tmp/fixed_jcl.txt \"//'Z89674.JCL(JES2JOB1)'\"
+            
+            echo '--- Verifying Updated JCL ---'
+            cat \"//'Z89674.JCL(JES2JOB1)'\"
+            
+            echo '--- Submitting Fixed Job ---'
+            submit \"//'Z89674.JCL(JES2JOB1)'\"
+            echo 'Job submitted! Look for Completion Code 0000 in the logs.'
           "
       
       - name: Submit CHKJCL2 Validation Job
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-          echo '--- Submitting CHKJCL2 Validation Job ---'
-          submit \"//'ZXP.PUBLIC.JCL(CHKJCL2)'\"
-          echo 'Validation job submitted! Check logs for CC 0000.'
+            echo '--- Submitting CHKJCL2 Validation Job ---'
+            submit \"//'ZXP.PUBLIC.JCL(CHKJCL2)'\"
+            echo 'Validation job submitted! Check logs for CC 0000.'
           "
