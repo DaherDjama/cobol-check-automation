@@ -42,21 +42,27 @@ jobs:
           echo '--- Results ---'
           cat /tmp/result.csv
           
-          echo '--- Uploading to Dataset Member using TSO OPUT ---'
-          tso \"OPUT '/tmp/result.csv' 'Z89674.OUTPUT(DB2OUT)'\" 2>&1
+          echo '--- Uploading to Dataset Member using CP ---'
+          # Use cp to copy USS file to MVS dataset member
+          cp /tmp/result.csv \"//'Z89674.OUTPUT(DB2OUT)'\"
           
           echo '--- Verifying Upload ---'
           cat \"//'Z89674.OUTPUT(DB2OUT)'\"
           "
       
-      - name: Submit CHKSQL Job
+      - name: Submit CHKSQL Job via REXX
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-          echo '--- Submitting CHKSQL Validation Job ---'
-          tso \"SUBMIT 'ZXP.PUBLIC.JCL(CHKSQL)'\" 2>&1
+          echo '--- Creating REXX Submit Script ---'
+          # Create a REXX script to bypass the dynamic TSO restriction
+          cat > /tmp/submit_job.rexx << 'REXXEOF'
+          /* REXX */
+          ADDRESS TSO
+          \"SUBMIT 'ZXP.PUBLIC.JCL(CHKSQL)'\"
+          REXXEOF
           
-          echo '--- Waiting for job completion ---'
-          sleep 15
+          echo '--- Running REXX Script to Submit Job ---'
+          rexx /tmp/submit_job.rexx
           
-          echo '--- Check your SDSF or job logs for completion code 0000 ---'
+          echo '--- Job Submitted! Check your job logs for completion code 0000 ---'
           "
