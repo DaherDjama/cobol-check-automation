@@ -1,3 +1,4 @@
+
 name: COBOL Check Automation
 
 on:
@@ -13,17 +14,44 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
       
-      - name: Run SQL Query via Java
+      - name: Solve SQL Challenge
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
           export JAVA_HOME=/usr/lpp/java/J8.0_64
-          export CLASSPATH=/usr/lpp/db2d10/jdbc/classes/db2jcc4.jar
+          export JDBC=/usr/lpp/db2d10/jdbc/classes/db2jcc4.jar
           
-          echo '--- RUNNING QUERY ---'
-          \$JAVA_HOME/bin/java com.ibm.db2.jcc.DB2Jcc \
-            -url jdbc:db2://204.90.115.200:5040/ZXPDB2 \
-            -user ${{ secrets.SSH_USERNAME }} \
-            -password ${{ secrets.SSH_PASSWORD }} \
-            -sql \"'SELECT D.DEPTNAME, MAX(COALESCE(E.SALARY,0) + COALESCE(E.BONUS,0) + COALESCE(E.COMM,0)) AS MAX_COMPENSATION FROM IBMUSER.DEPT D, IBMUSER.EMP E WHERE D.DEPTNO = E.WORKDEPT GROUP BY D.DEPTNAME ORDER BY D.DEPTNAME;'\"
-          echo '--- END ---'
+          echo '--- CREATING JAVA PROGRAM ---'
+          cat > /tmp/RunSQL.java << JAVAEOF
+          import java.sql.*;
+          public class RunSQL {
+              public static void main(String[] args) throws Exception {
+                  Class.forName(\"com.ibm.db2.jcc.DB2Driver\");
+                  Connection c = DriverManager.getConnection(\"jdbc:db2://204.90.115.200:5040/ZXPDB2\", \"${{ secrets.SSH_USERNAME }}\", \"${{ secrets.SSH_PASSWORD }}\");
+                  Statement s = c.createStatement();
+                  ResultSet r = s.executeQuery(\"SELECT D.DEPTNAME, MAX(COALESCE(E.SALARY,0) + COALESCE(E.BONUS,0) + COALESCE(E.COMM,0)) FROM IBMUSER.DEPT D, IBMUSER.EMP E WHERE D.DEPTNO = E.WORKDEPT GROUP BY D.DEPTNAME ORDER BY D.DEPTNAME\");
+                  System.out.println(\"DEPTNAME,MAX_COMPENSATION\");
+                  while(r.next()) {
+                      System.out.println(r.getString(1) + \",\" + r.getString(2));
+                  }
+                  c.close();
+              }
+          }
+          JAVAEOF
+          
+          echo '--- COMPILING ---'
+          \$JAVA_HOME/bin/javac -cp \$JDBC /tmp/RunSQL.java
+          
+          echo '--- RUNNING QUERY AND SAVING CSV ---'
+          \$JAVA_HOME/bin/java -cp /tmp:\$JDBC RunSQL > /tmp/result.csv
+          cat /tmp/result.csv
+          
+          echo '--- UPLOADING TO DATASET ---'
+          # Copy the CSV file to the mainframe dataset member
+          cp /tmp/result.csv \"//'Z89674.OUTPUT(DB2OUT)'\"
+          echo 'Uploaded to Z89674.OUTPUT(DB2OUT)'
+          
+          echo '--- SUBMITTING CHECKER JOB ---'
+          # Submit the validation job
+          submit 'ZXP.PUBLIC.JCL(CHKSQL)'
+          echo 'Job submitted!'
           "
