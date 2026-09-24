@@ -17,10 +17,13 @@ jobs:
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
           echo '--- CHECK PYTHON ---'
-          which python3
-          echo '--- SEARCH FOR JDBC DRIVER ---'
-          find /usr /opt /var -name '*db2jcc*.jar' 2>/dev/null | head -5
+          which python 2>/dev/null || echo 'python not found'
+          
+          echo '--- LIST INSTALLED PRODUCTS ---'
+          ls /usr/lpp 2>/dev/null
+          
           echo '--- READ PUBLIC JCL (ZOAU) ---'
-          dcat ZXP.PUBLIC.JCL(CHKSQL) 2>&1 | head -30
+          dcat 'ZXP.PUBLIC.JCL(CHKSQL)' 2>&1 | head -30
+          
           echo '--- END ---'
           "
