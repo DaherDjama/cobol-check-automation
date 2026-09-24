@@ -13,19 +13,20 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
       
-      - name: Find Java and Db2 Tools
+      - name: Find Db2 Tools and Read JCL
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-          echo '--- CHECK JAVA ---'
-          which java 2>/dev/null || echo 'java not found'
+          echo '--- CHECK DB2D10 BIN ---'
+          ls /usr/lpp/db2d10/bin 2>/dev/null
           
-          echo '--- CHECK DB2 COMMAND PATHS ---'
-          ls /usr/lpp/db2/bin 2>/dev/null
-          ls /usr/lpp/db2c10/bin 2>/dev/null
-          ls /usr/lpp/db2910_base/bin 2>/dev/null
+          echo '--- FIND DSN COMMAND ---'
+          find /usr/lpp/db2d10 -name DSN -type f 2>/dev/null
           
-          echo '--- CHECK JDBC DRIVER ---'
-          find /usr/lpp -name 'db2jcc4.jar' 2>/dev/null
+          echo '--- FIND JAVA ---'
+          find /usr/lpp/java -name java -type f 2>/dev/null | head -3
+          
+          echo '--- READ CHKSQL JCL ---'
+          cat \"//'ZXP.PUBLIC.JCL(CHKSQL)'\" 2>&1 | head -50
           
           echo '--- END ---'
           "
