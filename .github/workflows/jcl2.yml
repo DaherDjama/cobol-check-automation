@@ -10,13 +10,20 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
 
-      - name: Create OUTPUT Dataset and Fix JCL
+      - name: Delete Old OUTPUT and Create New PDS
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '--- Creating OUTPUT dataset (PDS) if it does not exist ---'
-            tso \"ALLOCATE DATASET('Z89674.OUTPUT') NEW SPACE(1,1) TRACKS LRECL(80) RECFM(F,B) BLKSIZE(3200) DSORG(PO) DIR(5)\" 2>&1 || echo 'Dataset may already exist'
+            echo '--- Deleting old OUTPUT dataset ---'
+            tso \"DELETE 'Z89674.OUTPUT'\" 2>&1 || echo 'Delete attempted'
             
-            echo '--- Creating Fixed JCL in USS ---'
+            echo '--- Creating OUTPUT as PDS ---'
+            tso \"ALLOCATE DATASET('Z89674.OUTPUT') NEW SPACE(1,1) TRACKS LRECL(80) RECFM(F,B) BLKSIZE(3200) DSORG(PO) DIR(5)\" 2>&1 || echo 'Allocation attempted'
+          "
+
+      - name: Fix JCL with ARTIST DD Statement
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
+            echo '--- Creating Fixed JCL with ARTIST ---'
             echo '//JES2JOB1  JOB ,MSGLEVEL=(2,0),CLASS=7' > /tmp/fixed_jcl.txt
             echo \"//COMBINE   EXEC PGM=IRXJCL,PARM='COMBINE'\" >> /tmp/fixed_jcl.txt
             echo '//SYSEXEC   DD DSN=ZXP.PUBLIC.EXEC,DISP=SHR' >> /tmp/fixed_jcl.txt
@@ -24,7 +31,7 @@ jobs:
             echo '//SYSTSIN   DD DUMMY' >> /tmp/fixed_jcl.txt
             echo '//NICKNAME  DD DSN=ZXP.PUBLIC.SOURCE(NICKNAME),DISP=SHR' >> /tmp/fixed_jcl.txt
             echo '//BRAND     DD DSN=ZXP.PUBLIC.SOURCE(BRAND),DISP=SHR' >> /tmp/fixed_jcl.txt
-            echo '//MODEL     DD DSN=ZXP.PUBLIC.SOURCE(MODEL),DISP=SHR' >> /tmp/fixed_jcl.txt
+            echo '//ARTIST    DD DSN=ZXP.PUBLIC.SOURCE(ARTIST),DISP=SHR' >> /tmp/fixed_jcl.txt
             
             echo '--- Copying Fixed JCL to Mainframe Dataset ---'
             cp /tmp/fixed_jcl.txt \"//'Z89674.JCL(JES2JOB1)'\"
