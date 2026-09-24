@@ -31,10 +31,10 @@ jobs:
             ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} \
             "ls -laR /z/${{ secrets.SSH_USERNAME }}/cobolcheck"
 
-      - name: Run SQL Query for Challenge
+      - name: Find Db2 Command Location
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-          echo '--- SQL RESULTS START ---'
-          db2 -x \"SELECT D.DEPTNAME || ',' || MAX(COALESCE(E.SALARY,0) + COALESCE(E.BONUS,0) + COALESCE(E.COMM,0)) FROM IBMUSER.DEPT D, IBMUSER.EMP E WHERE D.DEPTNO = E.WORKDEPT GROUP BY D.DEPTNAME ORDER BY D.DEPTNAME;\"
-          echo '--- SQL RESULTS END ---'
+          echo '--- SEARCHING FOR DB2 ---'
+          find /usr/lpp -name 'db2' -type f 2>/dev/null | head -5
+          echo '--- SEARCH END ---'
           "
