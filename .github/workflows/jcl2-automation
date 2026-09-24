@@ -1,0 +1,32 @@
+name: JCL2 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  jcl2-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get install -y sshpass
+
+      - name: Copy JCL and Investigate
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
+          echo '--- Step 1: Copying JES2JOB1 to your JCL dataset ---'
+          # Copy from public library to your personal JCL dataset
+          cp \"//'ZXP.PUBLIC.JCL(JES2JOB1)'\" \"//'Z89674.JCL(JES2JOB1)'\"
+          
+          echo '--- Step 2: Current JCL Content ---'
+          # Show us the code so we can see what DD statements exist
+          cat \"//'Z89674.JCL(JES2JOB1)'\"
+          
+          echo '--- Step 3: Files available in ZXP.PUBLIC.SOURCE ---'
+          # List the members in the source dataset to find the missing file
+          tso \"LISTDS 'ZXP.PUBLIC.SOURCE' MEMBERS\" 2>&1 | grep -v 'IKJ' | grep -v 'READY' | grep -v 'RETURN' | grep -v 'TSO'
+          
+          echo '--- Step 4: Submitting the broken job ---'
+          # Submit the job to see it fail (CC 0008)
+          submit \"//'Z89674.JCL(JES2JOB1)'\"
+          echo 'Job submitted! Check logs for the Job ID.'
+          "
