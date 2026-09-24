@@ -40,8 +40,41 @@ jobs:
           
           echo '--- Results ---'
           cat /tmp/result.csv
+          "
+      
+      - name: Create OUTPUT Dataset and Upload CSV
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
+          echo '--- Creating OUTPUT Dataset ---'
+          tso \"ALLOCATE DATASET('Z89674.OUTPUT') NEW SPACE(1,1) TRACKS LRECL(256) RECFM(F,B) BLKSIZE(256) DSORG(PS)\" 2>&1 || echo 'Dataset may already exist'
           
-          echo '--- Uploading to Dataset ---'
-          cat /tmp/result.csv > '//Z89674.OUTPUT(DB2OUT)'
-          echo '--- Upload Complete ---'
+          echo '--- Uploading CSV to DB2OUT member ---'
+          # Create the CSV content and write it to the dataset
+          cat > /tmp/upload_csv.sh << 'SCRIPT'
+          #!/bin/sh
+          cat /tmp/result.csv | while read line; do
+            echo \"$line\"
+          done > '//Z89674.OUTPUT(DB2OUT)'
+          SCRIPT
+          chmod +x /tmp/upload_csv.sh
+          /tmp/upload_csv.sh
+          
+          echo '--- Verifying Upload ---'
+          cat '//Z89674.OUTPUT(DB2OUT)'
+          "
+      
+      - name: Submit CHKSQL Job
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
+          echo '--- Submitting CHKSQL Job ---'
+          # Submit the job and capture the job ID
+          JOB_ID=\$(tso \"SUBMIT 'ZXP.PUBLIC.JCL(CHKSQL)'\" 2>&1 | grep 'JOB[0-9]' | awk '{print \$NF}')
+          echo \"Submitted job: \$JOB_ID\"
+          
+          # Wait a moment for the job to run
+          sleep 5
+          
+          # Check job status
+          echo '--- Checking Job Status ---'
+          tso \"STATUS \$JOB_ID\" 2>&1 || echo 'Job status check completed'
           "
