@@ -13,85 +13,49 @@ jobs:
 
       - name: Modify and Compile Assembler Program
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'REMOTE_SCRIPT'
             echo '=== SOURCING PROFILE ==='
             source /etc/profile 2>/dev/null || true
             
-            echo '=== STEP 1: Create Python script ==='
-            echo 'from zoautil_py import datasets' > /z/z89674/fix_asm.py
-            echo 'import re' >> /z/z89674/fix_asm.py
-            echo '' >> /z/z89674/fix_asm.py
-            echo '# Read the source code' >> /z/z89674/fix_asm.py
-            echo 's = datasets.read(\"ZXP.PUBLIC.SOURCE(ASMPGM)\")' >> /z/z89674/fix_asm.py
-            echo '' >> /z/z89674/fix_asm.py
-            echo '# Print original for debugging' >> /z/z89674/fix_asm.py
-            echo 'print(\"=== ORIGINAL CODE (first 20 lines) ===\")' >> /z/z89674/fix_asm.py
-            echo 'for i, line in enumerate(s.split(chr(10))[:20]):' >> /z/z89674/fix_asm.py
-            echo '    print(f\"{i}: {repr(line)}\")' >> /z/z89674/fix_asm.py
-            echo '' >> /z/z89674/fix_asm.py
-            echo '# Do replacements using regex for flexible matching' >> /z/z89674/fix_asm.py
-            echo 's = re.sub(r\"L\\s+2,=C\", \"L 6,=C\", s)' >> /z/z89674/fix_asm.py
-            echo 's = re.sub(r\"LA\\s+2,=C\", \"LA 6,=C\", s)' >> /z/z89674/fix_asm.py
-            echo 's = re.sub(r\"SR\\s+2,2\", \"SR 7,7\", s)' >> /z/z89674/fix_asm.py
-            echo 's = re.sub(r\"L\\s+2,=F.4.\", \"L 6,=F\\'10\\'\", s)' >> /z/z89674/fix_asm.py
-            echo 's = re.sub(r\"L\\s+3,=F.1.\", \"L 7,=F\\'0\\'\", s)' >> /z/z89674/fix_asm.py
-            echo 's = re.sub(r\"A\\s+3,=F.1.\", \"A 7,=F\\'5\\'\", s)' >> /z/z89674/fix_asm.py
-            echo 's = re.sub(r\"BCT\\s+2,LOOP\", \"BCT 6,LOOP\", s)' >> /z/z89674/fix_asm.py
-            echo 's = re.sub(r\"LH\\s+3,HALFCON\", \"LH 7,HALFCON\", s)' >> /z/z89674/fix_asm.py
-            echo 's = re.sub(r\"A\\s+3,FULLCON\", \"A 7,FULLCON\", s)' >> /z/z89674/fix_asm.py
-            echo 's = re.sub(r\"ST\\s+3,HEXCON\", \"ST 7,HEXCON\", s)' >> /z/z89674/fix_asm.py
-            echo '' >> /z/z89674/fix_asm.py
-            echo '# Print modified for debugging' >> /z/z89674/fix_asm.py
-            echo 'print(\"=== MODIFIED CODE (first 20 lines) ===\")' >> /z/z89674/fix_asm.py
-            echo 'for i, line in enumerate(s.split(chr(10))[:20]):' >> /z/z89674/fix_asm.py
-            echo '    print(f\"{i}: {repr(line)}\")' >> /z/z89674/fix_asm.py
-            echo '' >> /z/z89674/fix_asm.py
-            echo '# Write to USS file first' >> /z/z89674/fix_asm.py
-            echo 'with open(\"/z/z89674/ASM2PGM.txt\", \"w\") as f:' >> /z/z89674/fix_asm.py
-            echo '    f.write(s)' >> /z/z89674/fix_asm.py
-            echo 'print(\"Written to USS file\")' >> /z/z89674/fix_asm.py
+            echo '=== STEP 1: Create Python script using Heredoc ==='
+            cat > /z/z89674/fix_asm.py << 'PYEOF'
+            from zoautil_py import datasets
+            sq = chr(39)
+            
+            # Read and Modify Source
+            s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
+            s = s.replace("SR 2,2", "SR 7,7")
+            s = s.replace("L 2,=C", "L 6,=C")
+            s = s.replace("LA 2,=C", "LA 6,=C")
+            s = s.replace("L 2,=F" + sq + "4" + sq, "L 6,=F" + sq + "10" + sq)
+            s = s.replace("L 3,=F" + sq + "1" + sq, "L 7,=F" + sq + "0" + sq)
+            s = s.replace("A 3,=F" + sq + "1" + sq, "A 7,=F" + sq + "5" + sq)
+            s = s.replace("BCT 2,LOOP", "BCT 6,LOOP")
+            s = s.replace("LH 3,HALFCON", "LH 7,HALFCON")
+            s = s.replace("A 3,FULLCON", "A 7,FULLCON")
+            s = s.replace("ST 3,HEXCON", "ST 7,HEXCON")
+            
+            datasets.write("Z89674.SOURCE(ASM2PGM)", s)
+            print("Source code updated successfully")
+            
+            # Read and Modify JCL
+            j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
+            j = j.replace("ASMPGM", "ASM2PGM")
+            datasets.write("Z89674.JCL(ASM2PGM)", j)
+            print("JCL updated successfully")
+            PYEOF
             
             echo '=== STEP 2: Run Python script ==='
             cd /z/z89674
             python3 fix_asm.py 2>&1
             
-            echo '=== STEP 3: Check USS file ==='
-            wc -l /z/z89674/ASM2PGM.txt
-            head -20 /z/z89674/ASM2PGM.txt
+            echo '=== STEP 3: Submitting Compilation Job ==='
+            submit //'Z89674.JCL(ASM2PGM)'
             
-            echo '=== STEP 4: Copy to SOURCE dataset ==='
-            tso \"DELETE 'Z89674.SOURCE(ASM2PGM)'\" 2>/dev/null || echo 'Member did not exist'
-            cp -F recfm=fb,lrecl=80 /z/z89674/ASM2PGM.txt \"//'Z89674.SOURCE(ASM2PGM)'\" 2>&1
-            echo 'Copy exit code:' \$?
-            
-            echo '=== STEP 5: Verify SOURCE dataset ==='
-            cat \"//'Z89674.SOURCE(ASM2PGM)'\" | head -20
-            
-            echo '=== STEP 6: Modify JCL ==='
-            echo 'from zoautil_py import datasets' > /z/z89674/fix_jcl.py
-            echo 'j = datasets.read(\"ZXP.PUBLIC.JCL(ASMPGM)\")' >> /z/z89674/fix_jcl.py
-            echo 'j = j.replace(\"ASMPGM\", \"ASM2PGM\")' >> /z/z89674/fix_jcl.py
-            echo 'with open(\"/z/z89674/ASM2JCL.txt\", \"w\") as f:' >> /z/z89674/fix_jcl.py
-            echo '    f.write(j)' >> /z/z89674/fix_jcl.py
-            echo 'print(\"JCL written to USS file\")' >> /z/z89674/fix_jcl.py
-            
-            python3 fix_jcl.py 2>&1
-            
-            echo '=== STEP 7: Copy JCL to dataset ==='
-            tso \"DELETE 'Z89674.JCL(ASM2PGM)'\" 2>/dev/null || echo 'JCL member did not exist'
-            cp -F recfm=fb,lrecl=80 /z/z89674/ASM2JCL.txt \"//'Z89674.JCL(ASM2PGM)'\" 2>&1
-            echo 'JCL Copy exit code:' \$?
-            
-            echo '=== STEP 8: Verify JCL dataset ==='
-            cat \"//'Z89674.JCL(ASM2PGM)'\" | head -20
-            
-            echo '=== STEP 9: Submit compilation job ==='
-            submit \"//'Z89674.JCL(ASM2PGM)'\"
-            
-            echo '=== STEP 10: Waiting for assembler ==='
+            echo '=== STEP 4: Waiting for assembler ==='
             sleep 30
             
-            echo '=== STEP 11: Submitting CHKASM2 ==='
-            submit \"//'ZXP.PUBLIC.JCL(CHKASM2)'\"
+            echo '=== STEP 5: Submitting CHKASM2 ==='
+            submit //'ZXP.PUBLIC.JCL(CHKASM2)'
             echo 'Validation job submitted!'
-          "
+          REMOTE_SCRIPT
