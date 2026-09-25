@@ -13,13 +13,26 @@ jobs:
       - name: Find Node.js and Run Server
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '--- Step 1: Finding Node.js installation ---'
-            # Search for node executable in common locations
-            NODE_PATH=\$(which node 2>/dev/null || find /usr /opt -name node -type f 2>/dev/null | head -1)
+            echo '--- Step 1: Searching for Node.js in common z/OS locations ---'
+            NODE_PATH=''
+            for path in /usr/lpp/ibmnode/bin/node /usr/local/bin/node /opt/ibm/node/bin/node /usr/lpp/node/bin/node; do
+              if [ -x \"\$path\" ]; then
+                NODE_PATH=\$path
+                break
+              fi
+            done
+            
+            if [ -z \"\$NODE_PATH\" ]; then
+              echo 'Searching with find command...'
+              NODE_PATH=\$(find /usr/lpp /opt /usr/local -name node -type f 2>/dev/null | head -1)
+            fi
+            
             echo \"Node.js found at: \$NODE_PATH\"
             
             if [ -z \"\$NODE_PATH\" ]; then
-              echo 'ERROR: Node.js not found!'
+              echo 'ERROR: Node.js not found in any location!'
+              echo 'Listing /usr/lpp directory to investigate:'
+              ls -la /usr/lpp/
               exit 1
             fi
             
