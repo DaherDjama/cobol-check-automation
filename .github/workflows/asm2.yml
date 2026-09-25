@@ -1,3 +1,4 @@
+
 name: ASM2 Challenge Automation
 
 on:
@@ -16,7 +17,6 @@ jobs:
           from zoautil_py import datasets
           import re
           
-          # --- PART 1: Modify Source Code ---
           s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
           
           print("=== ORIGINAL CODE (relevant lines) ===")
@@ -25,34 +25,27 @@ jobs:
               if ' 2,' in line or ' 3,' in line or '=F' in line:
                   print(f"{i}: {repr(line)}")
           
-          # Process line by line to replace ALL occurrences
-          lines = s.split('\n')
-          new_lines = []
-          for line in lines:
-              # Replace ALL " 2," with " 6," (multiple times to catch all occurrences)
-              while ' 2,' in line:
-                  line = line.replace(' 2,', ' 6,', 1)
-              
-              # Replace ALL " 3," with " 7,"
-              while ' 3,' in line:
-                  line = line.replace(' 3,', ' 7,', 1)
-              
-              new_lines.append(line)
+          # 1. Register Replacements
+          # Replace ' 2,' with ' 6,' (handles first operand like L 2,...)
+          s = s.replace(' 2,', ' 6,')
+          # Replace ',2' with ',6' (handles second operand like SR 6,2 -> SR 6,6)
+          s = s.replace(',2', ',6')
           
-          s = '\n'.join(new_lines)
+          # Replace ' 3,' with ' 7,'
+          s = s.replace(' 3,', ' 7,')
+          # Replace ',3' with ',7'
+          s = s.replace(',3', ',7')
           
-          # Now fix the values - try multiple quote styles
-          # Replace =F'4' with =F'10'
+          # 2. Value Replacements
+          # Loop count: =F'4' -> =F'10'
           s = s.replace("=F'4'", "=F'10'")
-          s = s.replace('=F"4"', "=F'10'")
           
-          # Replace L 7,=F'1' with L 7,=F'0' (initialize sum to 0)
-          s = s.replace("L 7,=F'1'", "L 7,=F'0'")
-          s = s.replace('L 7,=F"1"', "L 7,=F'0'")
+          # Sum Initialization: L (spaces) 7,=F'1' -> L 7,=F'0'
+          # Using regex to handle variable spacing (e.g. "L  7,=F'1'")
+          s = re.sub(r'L\s+7,=F\'1\'', "L 7,=F'0'", s)
           
-          # Replace A 7,=F'1' with A 7,=F'5' (add 5 each loop)
-          s = s.replace("A 7,=F'1'", "A 7,=F'5'")
-          s = s.replace('A 7,=F"1"', "A 7,=F'5'")
+          # Add Value: A (spaces) 7,=F'1' -> A 7,=F'5'
+          s = re.sub(r'A\s+7,=F\'1\'', "A 7,=F'5'", s)
           
           print("\n=== MODIFIED CODE (relevant lines) ===")
           lines = s.split('\n')
@@ -60,15 +53,15 @@ jobs:
               if ' 6,' in line or ' 7,' in line or '=F' in line:
                   print(f"{i}: {repr(line)}")
           
-          # Truncate all lines to 80 chars
+          # Truncate lines to 80 chars
           lines = s.split('\n')
-          truncated_lines = [line[:80] if len(line) > 80 else line for line in lines]
-          s_fixed = '\n'.join(truncated_lines)
+          truncated = [line[:80] for line in lines]
+          s_final = '\n'.join(truncated)
           
-          datasets.write("Z89674.SOURCE(ASM2PGM)", s_fixed)
+          datasets.write("Z89674.SOURCE(ASM2PGM)", s_final)
           print("\nSource code updated successfully")
           
-          # --- PART 2: Modify JCL ---
+          # JCL Modification
           j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
           lines = j.split('\n')
           new_lines = []
