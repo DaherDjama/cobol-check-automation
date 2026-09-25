@@ -20,34 +20,31 @@ jobs:
             echo '--- Step 2: Copying source code from ZXP.PUBLIC.SOURCE(NODE1) ---'
             cat \"//'ZXP.PUBLIC.SOURCE(NODE1)'\" > /z/z89674/node/program1.js
             
-            echo '--- Step 3: Verifying original code ---'
-            echo 'Original line 15:'
-            sed -n '15p' /z/z89674/node/program1.js
-            
-            echo '--- Step 4: Modifying code to show actual port ---'
+            echo '--- Step 3: Modifying code to show actual port ---'
             sed 's/port}/server.address().port}/g' /z/z89674/node/program1.js > /tmp/program1_fixed.js
             mv /tmp/program1_fixed.js /z/z89674/node/program1.js
             
-            echo '--- Step 5: Verifying modified code ---'
-            echo 'Modified line 15:'
+            echo '--- Step 4: Verifying modified code ---'
             sed -n '15p' /z/z89674/node/program1.js
             
-            echo '--- Step 6: Starting Node Server in background ---'
+            echo '--- Step 5: Starting Node Server ---'
             cd /z/z89674/node
-            nohup node program1.js > /tmp/node_output.log 2>&1 &
-            NODE_PID=$!
-            echo \"Server started with PID: $NODE_PID\"
             
-            echo '--- Step 7: Waiting 10 seconds for server to start ---'
+            # Start server in background and capture output
+            node program1.js > /tmp/node_output.log 2>&1 &
+            SERVER_PID=\$!
+            echo \"Server PID: \$SERVER_PID\"
+            
+            echo '--- Step 6: Waiting 10 seconds for server to start ---'
             sleep 10
             
-            echo '--- Step 8: Checking if server is running ---'
-            ps -ef | grep node | grep -v grep
-            
-            echo '--- Step 9: Server Output ---'
+            echo '--- Step 7: Checking server output ---'
             cat /tmp/node_output.log
             
-            echo '--- Step 10: Submitting CHKNODE1 Validation Job ---'
+            echo '--- Step 8: Checking if node process is running ---'
+            ps -ef | grep \"node program1\" | grep -v grep
+            
+            echo '--- Step 9: Submitting CHKNODE1 Validation Job ---'
             submit \"//'ZXP.PUBLIC.JCL(CHKNODE1)'\"
             echo 'Validation job submitted!'
           "
