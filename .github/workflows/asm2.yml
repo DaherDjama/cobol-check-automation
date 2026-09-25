@@ -1,0 +1,62 @@
+name: ASM2 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  asm2-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get install -y sshpass
+
+      - name: Modify and Compile Assembler Program
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
+            echo '=== STEP 1: Copying ASMPGM source code ==='
+            cat \"//'ZXP.PUBLIC.SOURCE(ASMPGM)'\" > /z/z89674/asm2pgm.txt
+            
+            echo '=== STEP 2: Modifying assembler code ==='
+            # Replace registers and loop parameters
+            sed '
+              s/L 2,=F/L 6,=F/g
+              s/LA 2,=C/LA 6,=C/g
+              s/SR 2,2/SR 7,7/g
+              s/L 3,=F/L 7,=F/g
+              s/A 3,=F/A 7,=F/g
+              s/BCT 2,LOOP/BCT 6,LOOP/g
+              s/LH 3,HALFCON/LH 7,HALFCON/g
+              s/A 3,FULLCON/A 7,FULLCON/g
+              s/ST 3,HEXCON/ST 7,HEXCON/g
+              s/=F'\''4'\''/=F'\''10'\''/g
+              s/=F'\''1'\''/=F'\''5'\''/g
+            ' /z/z89674/asm2pgm.txt > /z/z89674/ASM2PGM
+            
+            echo '=== STEP 3: Verifying modifications ==='
+            echo 'Modified register usage:'
+            grep -E '(L |LA |SR |A |BCT |LH |ST )[67],' /z/z89674/ASM2PGM | head -20
+            echo ''
+            echo 'Loop parameters:'
+            grep -E \"=F'(10|5)'\" /z/z89674/ASM2PGM
+            
+            echo '=== STEP 4: Copying modified code to SOURCE dataset ==='
+            cp /z/z89674/ASM2PGM \"//'Z89674.SOURCE(ASM2PGM)'\"
+            
+            echo '=== STEP 5: Copying and modifying JCL ==='
+            # Copy the JCL that compiles ASMPGM
+            cat \"//'ZXP.PUBLIC.JCL(ASMPGM)'\" > /z/z89674/asm2jcl.txt
+            
+            # Modify JCL to use ASM2PGM instead of ASMPGM
+            sed 's/ASMPGM/ASM2PGM/g' /z/z89674/asm2jcl.txt > /z/z89674/ASM2JCL
+            
+            echo '=== STEP 6: Submitting compilation job ==='
+            cp /z/z89674/ASM2JCL \"//'Z89674.JCL(ASM2PGM)'\"
+            submit \"//'Z89674.JCL(ASM2PGM)'\"
+            
+            echo '=== STEP 7: Waiting for compilation ==='
+            sleep 15
+            
+            echo '=== STEP 8: Submitting CHKASM2 validation job ==='
+            submit \"//'ZXP.PUBLIC.JCL(CHKASM2)'\"
+            echo 'Validation job submitted!'
+          "
