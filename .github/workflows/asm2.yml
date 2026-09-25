@@ -21,39 +21,63 @@ jobs:
             echo 'Source file lines:'
             wc -l /z/z89674/asm_raw.txt
             
-            echo '=== STEP 2: Apply sed modifications directly ==='
-            sed -e 's/L 2,=C/L 6,=C/g' \
-                -e 's/LA 2,=C/LA 6,=C/g' \
-                -e 's/SR 2,2/SR 7,7/g' \
-                -e \"s/L 2,=F'4'/L 6,=F'10'/g\" \
-                -e \"s/L 3,=F'1'/L 7,=F'0'/g\" \
-                -e \"s/A 3,=F'1'/A 7,=F'5'/g\" \
-                -e 's/BCT 2,LOOP/BCT 6,LOOP/g' \
-                -e 's/LH 3,HALFCON/LH 7,HALFCON/g' \
-                -e 's/A 3,FULLCON/A 7,FULLCON/g' \
-                -e 's/ST 3,HEXCON/ST 7,HEXCON/g' \
-                /z/z89674/asm_raw.txt > /z/z89674/ASM2PGM
+            echo '=== STEP 2: Create Python script to do replacements ==='
+            echo 'import sys' > /z/z89674/fix_asm.py
+            echo 'from zoautil_py import datasets' >> /z/z89674/fix_asm.py
+            echo '' >> /z/z89674/fix_asm.py
+            echo '# Read the source file' >> /z/z89674/fix_asm.py
+            echo 'with open(\"/z/z89674/asm_raw.txt\", \"r\") as f:' >> /z/z89674/fix_asm.py
+            echo '    content = f.read()' >> /z/z89674/fix_asm.py
+            echo '' >> /z/z89674/fix_asm.py
+            echo '# Do the replacements' >> /z/z89674/fix_asm.py
+            echo 'content = content.replace(\"L 2,=C\", \"L 6,=C\")' >> /z/z89674/fix_asm.py
+            echo 'content = content.replace(\"LA 2,=C\", \"LA 6,=C\")' >> /z/z89674/fix_asm.py
+            echo 'content = content.replace(\"SR 2,2\", \"SR 7,7\")' >> /z/z89674/fix_asm.py
+            echo 'content = content.replace(\"L 2,=F\\'4\\'\", \"L 6,=F\\'10\\'\")' >> /z/z89674/fix_asm.py
+            echo 'content = content.replace(\"L 3,=F\\'1\\'\", \"L 7,=F\\'0\\'\")' >> /z/z89674/fix_asm.py
+            echo 'content = content.replace(\"A 3,=F\\'1\\'\", \"A 7,=F\\'5\\'\")' >> /z/z89674/fix_asm.py
+            echo 'content = content.replace(\"BCT 2,LOOP\", \"BCT 6,LOOP\")' >> /z/z89674/fix_asm.py
+            echo 'content = content.replace(\"LH 3,HALFCON\", \"LH 7,HALFCON\")' >> /z/z89674/fix_asm.py
+            echo 'content = content.replace(\"A 3,FULLCON\", \"A 7,FULLCON\")' >> /z/z89674/fix_asm.py
+            echo 'content = content.replace(\"ST 3,HEXCON\", \"ST 7,HEXCON\")' >> /z/z89674/fix_asm.py
+            echo '' >> /z/z89674/fix_asm.py
+            echo '# Write the modified content' >> /z/z89674/fix_asm.py
+            echo 'with open(\"/z/z89674/ASM2PGM\", \"w\") as f:' >> /z/z89674/fix_asm.py
+            echo '    f.write(content)' >> /z/z89674/fix_asm.py
+            echo '' >> /z/z89674/fix_asm.py
+            echo '# Copy to SOURCE dataset' >> /z/z89674/fix_asm.py
+            echo 'datasets.write(\"Z89674.SOURCE(ASM2PGM)\", content)' >> /z/z89674/fix_asm.py
+            echo 'print(\"SOURCE dataset member created\")' >> /z/z89674/fix_asm.py
             
-            echo '=== STEP 3: Verify modifications ==='
+            echo '=== STEP 3: Run Python script to modify and copy ==='
+            cd /z/z89674
+            python3 fix_asm.py 2>&1
+            
+            echo '=== STEP 4: Verify modifications ==='
             echo 'Checking for registers 6 and 7:'
             grep -E '(L|LA|SR|A|BCT|LH|ST)[[:space:]]+[67],' /z/z89674/ASM2PGM | head -10
             echo 'Checking for loop values:'
             grep -E \"=F'(10|5|0)'\" /z/z89674/ASM2PGM
             
-            echo '=== STEP 4: Copy to SOURCE dataset using OPUT ==='
-            tso \"DELETE 'Z89674.SOURCE(ASM2PGM)'\" 2>/dev/null || echo 'Member did not exist'
-            tso \"OPUT '/z/z89674/ASM2PGM' 'Z89674.SOURCE(ASM2PGM)'\"
-            
             echo '=== STEP 5: Verify SOURCE dataset ==='
             cat \"//'Z89674.SOURCE(ASM2PGM)'\" | head -20
             
-            echo '=== STEP 6: Modify JCL ==='
-            cat \"//'ZXP.PUBLIC.JCL(ASMPGM)'\" > /z/z89674/jcl_raw.txt
-            sed 's/ASMPGM/ASM2PGM/g' /z/z89674/jcl_raw.txt > /z/z89674/ASM2JCL
+            echo '=== STEP 6: Create Python script to modify JCL ==='
+            echo 'import sys' > /z/z89674/fix_jcl.py
+            echo 'from zoautil_py import datasets' >> /z/z89674/fix_jcl.py
+            echo '' >> /z/z89674/fix_jcl.py
+            echo '# Read the JCL' >> /z/z89674/fix_jcl.py
+            echo 'jcl_content = datasets.read(\"ZXP.PUBLIC.JCL(ASMPGM)\")' >> /z/z89674/fix_jcl.py
+            echo '' >> /z/z89674/fix_jcl.py
+            echo '# Replace ASMPGM with ASM2PGM' >> /z/z89674/fix_jcl.py
+            echo 'jcl_content = jcl_content.replace(\"ASMPGM\", \"ASM2PGM\")' >> /z/z89674/fix_jcl.py
+            echo '' >> /z/z89674/fix_jcl.py
+            echo '# Write to JCL dataset' >> /z/z89674/fix_jcl.py
+            echo 'datasets.write(\"Z89674.JCL(ASM2PGM)\", jcl_content)' >> /z/z89674/fix_jcl.py
+            echo 'print(\"JCL dataset member created\")' >> /z/z89674/fix_jcl.py
             
-            echo '=== STEP 7: Copy JCL to dataset using OPUT ==='
-            tso \"DELETE 'Z89674.JCL(ASM2PGM)'\" 2>/dev/null || echo 'JCL member did not exist'
-            tso \"OPUT '/z/z89674/ASM2JCL' 'Z89674.JCL(ASM2PGM)'\"
+            echo '=== STEP 7: Run Python script to modify and copy JCL ==='
+            python3 fix_jcl.py 2>&1
             
             echo '=== STEP 8: Verify JCL dataset ==='
             cat \"//'Z89674.JCL(ASM2PGM)'\" | head -20
