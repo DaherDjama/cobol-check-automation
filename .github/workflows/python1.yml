@@ -13,33 +13,44 @@ jobs:
       - name: Setup and Run Python Script
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '--- Sourcing profile to load PATH and LIBPATH ---'
-            source /etc/profile 2>/dev/null || true
+            echo '=== SOURCING PROFILES ==='
+            source /etc/profile 2>&1
+            source ~/.profile 2>&1
+            source ~/.bash_profile 2>&1
             
-            echo '--- Checking Python availability ---'
+            echo '=== CHECKING PYTHON ENVIRONMENT ==='
+            echo 'Python path:'
             which python3
+            echo 'Python version:'
             python3 --version
+            echo 'PYTHONPATH:'
+            echo \$PYTHONPATH
+            echo 'LIBPATH:'
+            echo \$LIBPATH
             
-            echo '--- Step 1: Deleting old dataset if it exists ---'
-            tso \"DELETE 'Z89674.PYTHON.DATA'\" 2>/dev/null || echo 'Dataset did not exist'
+            echo '=== STEP 1: Deleting old dataset ==='
+            tso \"DELETE 'Z89674.PYTHON.DATA'\" 2>&1 || echo 'Dataset did not exist'
             
-            echo '--- Step 2: Copying source code ---'
+            echo '=== STEP 2: Copying source code ==='
             cat \"//'ZXP.PUBLIC.SOURCE(PYTHON1)'\" > /z/z89674/program1.py
             
-            echo '--- Step 3: Modifying HLQ (replacing z99996 with z89674) ---'
+            echo '=== STEP 3: Modifying HLQ ==='
             sed 's/z99996/z89674/g' /z/z89674/program1.py > /tmp/program1.py
             mv /tmp/program1.py /z/z89674/program1.py
             
-            echo '--- Step 4: Verifying modified code ---'
+            echo '=== STEP 4: Verifying modified code ==='
             grep 'HLQ=' /z/z89674/program1.py
             
-            echo '--- Step 5: Running Python Script ---'
+            echo '=== STEP 5: Running Python Script with full error capture ==='
             cd /z/z89674
             python3 program1.py 2>&1
+            PYTHON_EXIT_CODE=\$?
+            echo \"Python script exit code: \$PYTHON_EXIT_CODE\"
             
-            echo '--- Step 6: Submitting CHKPYTH1 Validation Job ---'
+            echo '=== STEP 6: Checking if dataset was created ==='
+            tso \"LISTDS 'Z89674.PYTHON.DATA'\" 2>&1 || echo 'Dataset not found'
+            
+            echo '=== STEP 7: Submitting CHKPYTH1 Validation Job ==='
             submit \"//'ZXP.PUBLIC.JCL(CHKPYTH1)'\"
             echo 'Validation job submitted!'
           "
-
-      
