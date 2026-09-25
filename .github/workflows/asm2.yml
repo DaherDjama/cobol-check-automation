@@ -25,21 +25,34 @@ jobs:
               if ' 2,' in line or ' 3,' in line or '=F' in line:
                   print(f"{i}: {repr(line)}")
           
-          # Replace ALL occurrences of " 2," with " 6," (with leading space to avoid partial matches)
-          s = s.replace(" 2,", " 6,")
+          # Process line by line to replace ALL occurrences
+          lines = s.split('\n')
+          new_lines = []
+          for line in lines:
+              # Replace ALL " 2," with " 6," (multiple times to catch all occurrences)
+              while ' 2,' in line:
+                  line = line.replace(' 2,', ' 6,', 1)
+              
+              # Replace ALL " 3," with " 7,"
+              while ' 3,' in line:
+                  line = line.replace(' 3,', ' 7,', 1)
+              
+              new_lines.append(line)
           
-          # Replace ALL occurrences of " 3," with " 7,"
-          s = s.replace(" 3,", " 7,")
+          s = '\n'.join(new_lines)
           
-          # Now fix the specific values
-          # Replace =F'4' with =F'10' (loop count: 4 → 10)
+          # Now fix the values - try multiple quote styles
+          # Replace =F'4' with =F'10'
           s = s.replace("=F'4'", "=F'10'")
+          s = s.replace('=F"4"', "=F'10'")
           
-          # Replace =F'1' with =F'0' for initialization (L 7,=F'1' → L 7,=F'0')
+          # Replace L 7,=F'1' with L 7,=F'0' (initialize sum to 0)
           s = s.replace("L 7,=F'1'", "L 7,=F'0'")
+          s = s.replace('L 7,=F"1"', "L 7,=F'0'")
           
-          # Replace =F'1' with =F'5' for the add operation (A 7,=F'1' → A 7,=F'5')
+          # Replace A 7,=F'1' with A 7,=F'5' (add 5 each loop)
           s = s.replace("A 7,=F'1'", "A 7,=F'5'")
+          s = s.replace('A 7,=F"1"', "A 7,=F'5'")
           
           print("\n=== MODIFIED CODE (relevant lines) ===")
           lines = s.split('\n')
@@ -47,7 +60,7 @@ jobs:
               if ' 6,' in line or ' 7,' in line or '=F' in line:
                   print(f"{i}: {repr(line)}")
           
-          # Truncate all lines to 80 chars before writing
+          # Truncate all lines to 80 chars
           lines = s.split('\n')
           truncated_lines = [line[:80] if len(line) > 80 else line for line in lines]
           s_fixed = '\n'.join(truncated_lines)
@@ -57,18 +70,14 @@ jobs:
           
           # --- PART 2: Modify JCL ---
           j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
-          
           lines = j.split('\n')
           new_lines = []
           for line in lines:
               new_line = line.replace("ASMPGM", "ASM2PGM")
-              # Truncate to 80 chars
               if len(new_line) > 80:
                   new_line = new_line[:80]
               new_lines.append(new_line)
-          
           j_fixed = '\n'.join(new_lines)
-          
           datasets.write("Z89674.JCL(ASM2PGM)", j_fixed)
           print("JCL updated successfully")
           PYEOF
