@@ -10,47 +10,48 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
 
-      - name: Setup and Run Python Script
+      - name: Create and Run Python Script
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
             echo '=== SOURCING PROFILES ==='
             source /etc/profile 2>&1
             source ~/.profile 2>&1
-            source ~/.bash_profile 2>&1
-            
-            echo '=== CHECKING PYTHON ENVIRONMENT ==='
-            echo 'Python path:'
-            which python3
-            echo 'Python version:'
-            python3 --version
-            echo 'PYTHONPATH:'
-            echo \$PYTHONPATH
-            echo 'LIBPATH:'
-            echo \$LIBPATH
             
             echo '=== STEP 1: Deleting old dataset ==='
             tso \"DELETE 'Z89674.PYTHON.DATA'\" 2>&1 || echo 'Dataset did not exist'
             
-            echo '=== STEP 2: Copying source code ==='
-            cat \"//'ZXP.PUBLIC.SOURCE(PYTHON1)'\" > /z/z89674/program1.py
+            echo '=== STEP 2: Creating Python script directly ==='
+            cat > /z/z89674/program1.py << 'PYEOF'
+from zoautil_py import datasets
+import os
+
+#set user ID as the High Level Qualifier
+HLQ="z89674"
+
+# create a sequential dataset
+datasets.create("%s.PYTHON.DATA"% HLQ, dataset_type="seq", record_length=80, record_format="FB", primary_space="100k")
+
+# write your data in the dataset
+datasets.write("%s.PYTHON.DATA"% HLQ, content='THIS IS JUST CONTENT CREATED BY USING PYTHON')
+
+# check if the data is in the dataset
+print(datasets.read("%s.PYTHON.DATA"% HLQ))
+
+# get your username from the system and store it in user
+user=os.environ.get("USER")
+print('this program is executed by'+user)
+PYEOF
             
-            echo '=== STEP 3: Modifying HLQ ==='
-            sed 's/z99996/z89674/g' /z/z89674/program1.py > /tmp/program1.py
-            mv /tmp/program1.py /z/z89674/program1.py
+            echo '=== STEP 3: Verifying script content ==='
+            cat /z/z89674/program1.py
             
-            echo '=== STEP 4: Verifying modified code ==='
-            grep 'HLQ=' /z/z89674/program1.py
-            
-            echo '=== STEP 5: Running Python Script with full error capture ==='
+            echo '=== STEP 4: Running Python Script ==='
             cd /z/z89674
             python3 program1.py 2>&1
             PYTHON_EXIT_CODE=\$?
             echo \"Python script exit code: \$PYTHON_EXIT_CODE\"
             
-            echo '=== STEP 6: Checking if dataset was created ==='
-            tso \"LISTDS 'Z89674.PYTHON.DATA'\" 2>&1 || echo 'Dataset not found'
-            
-            echo '=== STEP 7: Submitting CHKPYTH1 Validation Job ==='
+            echo '=== STEP 5: Submitting CHKPYTH1 Validation Job ==='
             submit \"//'ZXP.PUBLIC.JCL(CHKPYTH1)'\"
             echo 'Validation job submitted!'
           "
