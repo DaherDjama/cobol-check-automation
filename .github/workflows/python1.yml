@@ -1,0 +1,39 @@
+name: PYTHON1 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  python1-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get install -y sshpass
+
+      - name: Setup and Run Python Script
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
+            echo '--- Sourcing profile to load PATH ---'
+            source /etc/profile 2>/dev/null || true
+            
+            echo '--- Step 1: Deleting old dataset if it exists ---'
+            tso \"DELETE 'Z89674.PYTHON.DATA'\" 2>/dev/null || echo 'Dataset did not exist'
+            
+            echo '--- Step 2: Copying source code ---'
+            cat \"//'ZXP.PUBLIC.SOURCE(PYTHON1)'\" > /z/z89674/program1.py
+            
+            echo '--- Step 3: Modifying HLQ (replacing z99996 with z89674) ---'
+            sed 's/z99996/z89674/g' /z/z89674/program1.py > /tmp/program1.py
+            mv /tmp/program1.py /z/z89674/program1.py
+            
+            echo '--- Step 4: Verifying modified code ---'
+            grep 'HLQ=' /z/z89674/program1.py
+            
+            echo '--- Step 5: Running Python Script ---'
+            cd /z/z89674
+            python3 program1.py
+            
+            echo '--- Step 6: Submitting CHKPYTH1 Validation Job ---'
+            submit \"//'ZXP.PUBLIC.JCL(CHKPYTH1)'\"
+            echo 'Validation job submitted!'
+          "
