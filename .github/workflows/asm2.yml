@@ -16,7 +16,7 @@ jobs:
           from zoautil_py import datasets
           import re
           
-          # Read the source code
+          # --- PART 1: Modify Source Code ---
           s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
           
           print("=== ORIGINAL CODE (relevant lines) ===")
@@ -25,22 +25,21 @@ jobs:
               if ' 2,' in line or ' 3,' in line or '=F' in line:
                   print(f"{i}: {repr(line)}")
           
-          # Use regex to replace ALL instances of register 2 with register 6
-          # Match patterns like " 2," " 2," at word boundaries
-          s = re.sub(r'\b2,', '6,', s)
+          # Replace ALL occurrences of " 2," with " 6," (with leading space to avoid partial matches)
+          s = s.replace(" 2,", " 6,")
           
-          # Use regex to replace ALL instances of register 3 with register 7
-          s = re.sub(r'\b3,', '7,', s)
+          # Replace ALL occurrences of " 3," with " 7,"
+          s = s.replace(" 3,", " 7,")
           
           # Now fix the specific values
           # Replace =F'4' with =F'10' (loop count: 4 → 10)
-          s = re.sub(r"=F['\"]4['\"]", "=F'10'", s)
+          s = s.replace("=F'4'", "=F'10'")
           
-          # Replace =F'1' with =F'0' for the initialization (first occurrence)
-          # and =F'5' for the add operation (second occurrence)
-          # Since we already changed register 3 to 7, we need to find L 7,=F'1' and A 7,=F'1'
-          s = re.sub(r"L 7,=F['\"]1['\"]", "L 7,=F'0'", s)
-          s = re.sub(r"A 7,=F['\"]1['\"]", "A 7,=F'5'", s)
+          # Replace =F'1' with =F'0' for initialization (L 7,=F'1' → L 7,=F'0')
+          s = s.replace("L 7,=F'1'", "L 7,=F'0'")
+          
+          # Replace =F'1' with =F'5' for the add operation (A 7,=F'1' → A 7,=F'5')
+          s = s.replace("A 7,=F'1'", "A 7,=F'5'")
           
           print("\n=== MODIFIED CODE (relevant lines) ===")
           lines = s.split('\n')
@@ -48,19 +47,28 @@ jobs:
               if ' 6,' in line or ' 7,' in line or '=F' in line:
                   print(f"{i}: {repr(line)}")
           
-          datasets.write("Z89674.SOURCE(ASM2PGM)", s)
+          # Truncate all lines to 80 chars before writing
+          lines = s.split('\n')
+          truncated_lines = [line[:80] if len(line) > 80 else line for line in lines]
+          s_fixed = '\n'.join(truncated_lines)
+          
+          datasets.write("Z89674.SOURCE(ASM2PGM)", s_fixed)
           print("\nSource code updated successfully")
           
-          # Modify JCL
+          # --- PART 2: Modify JCL ---
           j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
+          
           lines = j.split('\n')
           new_lines = []
           for line in lines:
               new_line = line.replace("ASMPGM", "ASM2PGM")
+              # Truncate to 80 chars
               if len(new_line) > 80:
                   new_line = new_line[:80]
               new_lines.append(new_line)
+          
           j_fixed = '\n'.join(new_lines)
+          
           datasets.write("Z89674.JCL(ASM2PGM)", j_fixed)
           print("JCL updated successfully")
           PYEOF
