@@ -10,51 +10,49 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
 
-      - name: Modify and Compile Assembler Program
+      - name: Create Python script locally
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'ENDSSH'
-            echo '=== SOURCING PROFILE ==='
-            source /etc/profile 2>/dev/null || true
-            
-            echo '=== STEP 1: Create Python script ==='
-            cat > /z/z89674/fix_asm.py << 'PYEOF'
-            from zoautil_py import datasets
-            sq = chr(39)
-            
-            # Read and Modify Source
-            s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
-            s = s.replace("SR 2,2", "SR 7,7")
-            s = s.replace("L 2,=C", "L 6,=C")
-            s = s.replace("LA 2,=C", "LA 6,=C")
-            s = s.replace("L 2,=F" + sq + "4" + sq, "L 6,=F" + sq + "10" + sq)
-            s = s.replace("L 3,=F" + sq + "1" + sq, "L 7,=F" + sq + "0" + sq)
-            s = s.replace("A 3,=F" + sq + "1" + sq, "A 7,=F" + sq + "5" + sq)
-            s = s.replace("BCT 2,LOOP", "BCT 6,LOOP")
-            s = s.replace("LH 3,HALFCON", "LH 7,HALFCON")
-            s = s.replace("A 3,FULLCON", "A 7,FULLCON")
-            s = s.replace("ST 3,HEXCON", "ST 7,HEXCON")
-            
-            datasets.write("Z89674.SOURCE(ASM2PGM)", s)
-            print("Source code updated successfully")
-            
-            # Read and Modify JCL
-            j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
-            j = j.replace("ASMPGM", "ASM2PGM")
-            datasets.write("Z89674.JCL(ASM2PGM)", j)
-            print("JCL updated successfully")
-            PYEOF
-            
-            echo '=== STEP 2: Run Python script ==='
-            cd /z/z89674
-            python3 fix_asm.py 2>&1
-            
-            echo '=== STEP 3: Submitting Compilation Job ==='
-            submit //'Z89674.JCL(ASM2PGM)'
-            
-            echo '=== STEP 4: Waiting for assembler ==='
-            sleep 30
-            
-            echo '=== STEP 5: Submitting CHKASM2 ==='
-            submit //'ZXP.PUBLIC.JCL(CHKASM2)'
-            echo 'Validation job submitted!'
-          ENDSSH
+          cat > fix_asm.py << 'PYEOF'
+          from zoautil_py import datasets
+          sq = chr(39)
+          
+          # Read and Modify Source
+          s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
+          s = s.replace("SR 2,2", "SR 7,7")
+          s = s.replace("L 2,=C", "L 6,=C")
+          s = s.replace("LA 2,=C", "LA 6,=C")
+          s = s.replace("L 2,=F" + sq + "4" + sq, "L 6,=F" + sq + "10" + sq)
+          s = s.replace("L 3,=F" + sq + "1" + sq, "L 7,=F" + sq + "0" + sq)
+          s = s.replace("A 3,=F" + sq + "1" + sq, "A 7,=F" + sq + "5" + sq)
+          s = s.replace("BCT 2,LOOP", "BCT 6,LOOP")
+          s = s.replace("LH 3,HALFCON", "LH 7,HALFCON")
+          s = s.replace("A 3,FULLCON", "A 7,FULLCON")
+          s = s.replace("ST 3,HEXCON", "ST 7,HEXCON")
+          
+          datasets.write("Z89674.SOURCE(ASM2PGM)", s)
+          print("Source code updated successfully")
+          
+          # Read and Modify JCL
+          j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
+          j = j.replace("ASMPGM", "ASM2PGM")
+          datasets.write("Z89674.JCL(ASM2PGM)", j)
+          print("JCL updated successfully")
+          PYEOF
+
+      - name: Copy script to remote and execute
+        run: |
+          # Copy the Python script to the remote system
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no fix_asm.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/fix_asm.py
+          
+          # Execute the script on the remote system
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/fix_asm.py"
+          
+          # Submit the compilation job
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'Z89674.JCL(ASM2PGM)'"
+          
+          # Wait for assembler
+          sleep 30
+          
+          # Submit the validation job
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'ZXP.PUBLIC.JCL(CHKASM2)'"
+          echo 'Validation job submitted!'
