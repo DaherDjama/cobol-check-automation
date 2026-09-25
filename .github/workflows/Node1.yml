@@ -13,28 +13,12 @@ jobs:
       - name: Find Node.js and Run Server
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '--- Step 1: Searching for Node.js in common z/OS locations ---'
-            NODE_PATH=''
-            for path in /usr/lpp/ibmnode/bin/node /usr/local/bin/node /opt/ibm/node/bin/node /usr/lpp/node/bin/node; do
-              if [ -x \"\$path\" ]; then
-                NODE_PATH=\$path
-                break
-              fi
-            done
+            echo '--- Sourcing profile to load PATH ---'
+            source /etc/profile 2>/dev/null || source ~/.profile 2>/dev/null || true
             
-            if [ -z \"\$NODE_PATH\" ]; then
-              echo 'Searching with find command...'
-              NODE_PATH=\$(find /usr/lpp /opt /usr/local -name node -type f 2>/dev/null | head -1)
-            fi
-            
-            echo \"Node.js found at: \$NODE_PATH\"
-            
-            if [ -z \"\$NODE_PATH\" ]; then
-              echo 'ERROR: Node.js not found in any location!'
-              echo 'Listing /usr/lpp directory to investigate:'
-              ls -la /usr/lpp/
-              exit 1
-            fi
+            echo '--- Step 1: Finding Node.js installation ---'
+            which node
+            node --version
             
             echo '--- Step 2: Creating node directory ---'
             mkdir -p /z/z89674/node
@@ -51,9 +35,7 @@ jobs:
             
             echo '--- Step 6: Starting Node Server ---'
             cd /z/z89674/node
-            
-            # Use full path to node executable
-            \$NODE_PATH program1.js > /tmp/node_output.log 2>&1 &
+            node program1.js > /tmp/node_output.log 2>&1 &
             SERVER_PID=\$!
             echo \"Server PID: \$SERVER_PID\"
             
