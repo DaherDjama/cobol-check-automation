@@ -1,0 +1,39 @@
+name: NODE1 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  node1-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get install -y sshpass
+
+      - name: Setup and Run Node Server
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
+            echo '--- Step 1: Creating node directory ---'
+            mkdir -p /z/z89674/node
+            
+            echo '--- Step 2: Copying source code from ZXP.PUBLIC.SOURCE(NODE1) ---'
+            cat \"//'ZXP.PUBLIC.SOURCE(NODE1)'\" > /z/z89674/node/program1.js
+            
+            echo '--- Step 3: Modifying code to show actual port (Line 15) ---'
+            # Replace ${port} with ${server.address().port} in the console.log line
+            sed -i 's/\${port}/\${server.address().port}/g' /z/z89674/node/program1.js
+            
+            echo '--- Step 4: Starting Node Server in background ---'
+            cd /z/z89674/node
+            nohup node program1.js > /tmp/node_output.log 2>&1 &
+            
+            echo '--- Waiting 5 seconds for server to start ---'
+            sleep 5
+            
+            echo '--- Server Output (should show a port number) ---'
+            cat /tmp/node_output.log
+            
+            echo '--- Step 5: Submitting CHKNODE1 Validation Job ---'
+            submit \"//'ZXP.PUBLIC.JCL(CHKNODE1)'\"
+            echo 'Validation job submitted! The server should stop automatically after validation.'
+          "
