@@ -16,7 +16,10 @@ jobs:
             echo '=== SOURCING PROFILE ==='
             source /etc/profile 2>/dev/null || true
             
-            echo '=== STEP 1: Creating sed script to fix quoting issues ==='
+            echo '=== STEP 1: Copying original source code ==='
+            cat \"//'ZXP.PUBLIC.SOURCE(ASMPGM)'\" > /z/z89674/asm_raw.txt
+            
+            echo '=== STEP 2: Creating sed script line by line ==='
             echo 's/L 2,=C/L 6,=C/g' > /tmp/fix.sed
             echo 's/LA 2,=C/LA 6,=C/g' >> /tmp/fix.sed
             echo 's/SR 2,2/SR 7,7/g' >> /tmp/fix.sed
@@ -28,35 +31,32 @@ jobs:
             echo 's/A 3,FULLCON/A 7,FULLCON/g' >> /tmp/fix.sed
             echo 's/ST 3,HEXCON/ST 7,HEXCON/g' >> /tmp/fix.sed
             
-            echo '=== STEP 2: Copying and modifying source code ==='
-            cat \"//'ZXP.PUBLIC.SOURCE(ASMPGM)'\" > /z/z89674/asm_raw.txt
+            echo '=== STEP 3: Applying modifications ==='
             sed -f /tmp/fix.sed /z/z89674/asm_raw.txt > /z/z89674/ASM2PGM
             
-            echo '=== STEP 3: Verifying modifications ==='
+            echo '=== STEP 4: Verifying modifications ==='
             echo 'Checking for registers 6 and 7:'
             grep -E '(L |LA |SR |A |BCT |LH |ST )[67],' /z/z89674/ASM2PGM | head -10
-            echo 'Checking for loop values 10 and 5:'
-            grep -E \"=F'(10|5|0)'\" /z/z89674/ASM2PGM
             
-            echo '=== STEP 4: Copying to SOURCE dataset using OPUT ==='
+            echo '=== STEP 5: Copying to SOURCE dataset using OPUT ==='
             tso \"DELETE 'Z89674.SOURCE(ASM2PGM)'\" 2>/dev/null || echo 'Member did not exist'
             tso \"OPUT '/z/z89674/ASM2PGM' 'Z89674.SOURCE(ASM2PGM)'\"
             
-            echo '=== STEP 5: Modifying JCL ==='
+            echo '=== STEP 6: Modifying JCL ==='
             cat \"//'ZXP.PUBLIC.JCL(ASMPGM)'\" > /z/z89674/jcl_raw.txt
             sed 's/ASMPGM/ASM2PGM/g' /z/z89674/jcl_raw.txt > /z/z89674/ASM2JCL
             
-            echo '=== STEP 6: Copying JCL to dataset using OPUT ==='
+            echo '=== STEP 7: Copying JCL to dataset using OPUT ==='
             tso \"DELETE 'Z89674.JCL(ASM2PGM)'\" 2>/dev/null || echo 'JCL member did not exist'
             tso \"OPUT '/z/z89674/ASM2JCL' 'Z89674.JCL(ASM2PGM)'\"
             
-            echo '=== STEP 7: Submitting compilation job ==='
+            echo '=== STEP 8: Submitting compilation job ==='
             submit \"//'Z89674.JCL(ASM2PGM)'\"
             
-            echo '=== STEP 8: Waiting for assembler to finish ==='
+            echo '=== STEP 9: Waiting for assembler to finish ==='
             sleep 30
             
-            echo '=== STEP 9: Submitting CHKASM2 validation job ==='
+            echo '=== STEP 10: Submitting CHKASM2 validation job ==='
             submit \"//'ZXP.PUBLIC.JCL(CHKASM2)'\"
             echo 'Validation job submitted!'
           "
