@@ -17,46 +17,59 @@ jobs:
             cat \"//'ZXP.PUBLIC.SOURCE(ASMPGM)'\" > /z/z89674/asm2pgm.txt
             
             echo '=== STEP 2: Modifying assembler code ==='
-            # Replace registers and loop parameters
+            # More precise replacements - order matters!
             sed '
-              s/L 2,=F/L 6,=F/g
-              s/LA 2,=C/LA 6,=C/g
+              s/L 2,=F'\''4'\''/L 6,=F'\''10'\''/g
+              s/L 3,=F'\''1'\''/L 7,=F'\''5'\''/g
               s/SR 2,2/SR 7,7/g
-              s/L 3,=F/L 7,=F/g
-              s/A 3,=F/A 7,=F/g
+              s/A 3,=F'\''1'\''/A 7,=F'\''5'\''/g
               s/BCT 2,LOOP/BCT 6,LOOP/g
               s/LH 3,HALFCON/LH 7,HALFCON/g
               s/A 3,FULLCON/A 7,FULLCON/g
               s/ST 3,HEXCON/ST 7,HEXCON/g
-              s/=F'\''4'\''/=F'\''10'\''/g
-              s/=F'\''1'\''/=F'\''5'\''/g
+              s/L 2,=C/L 6,=C/g
+              s/LA 2,=C/LA 6,=C/g
             ' /z/z89674/asm2pgm.txt > /z/z89674/ASM2PGM
             
             echo '=== STEP 3: Verifying modifications ==='
-            echo 'Modified register usage:'
+            echo 'Checking register 6 and 7 usage:'
             grep -E '(L |LA |SR |A |BCT |LH |ST )[67],' /z/z89674/ASM2PGM | head -20
             echo ''
-            echo 'Loop parameters:'
+            echo 'Checking loop parameters:'
             grep -E \"=F'(10|5)'\" /z/z89674/ASM2PGM
             
-            echo '=== STEP 4: Copying modified code to SOURCE dataset ==='
-            cp /z/z89674/ASM2PGM \"//'Z89674.SOURCE(ASM2PGM)'\"
+            echo '=== STEP 4: Creating SOURCE dataset member ==='
+            # First delete old member if it exists
+            tso \"DELETE 'Z89674.SOURCE(ASM2PGM)'\" 2>&1 || echo 'Member did not exist'
             
-            echo '=== STEP 5: Copying and modifying JCL ==='
-            # Copy the JCL that compiles ASMPGM
+            # Copy using cp with proper options for mainframe datasets
+            cp -B /z/z89674/ASM2PGM \"//'Z89674.SOURCE(ASM2PGM)'\" 2>&1 || {
+              echo 'cp -B failed, trying alternative method...'
+              # Alternative: use tso OPUT command
+              tso \"OPUT '/z/z89674/ASM2PGM' 'Z89674.SOURCE(ASM2PGM)'\" 2>&1
+            }
+            
+            echo '=== STEP 5: Verifying dataset member ==='
+            cat \"//'Z89674.SOURCE(ASM2PGM)'\" | head -20
+            
+            echo '=== STEP 6: Copying and modifying JCL ==='
             cat \"//'ZXP.PUBLIC.JCL(ASMPGM)'\" > /z/z89674/asm2jcl.txt
             
-            # Modify JCL to use ASM2PGM instead of ASMPGM
+            # Modify JCL to use ASM2PGM
             sed 's/ASMPGM/ASM2PGM/g' /z/z89674/asm2jcl.txt > /z/z89674/ASM2JCL
             
-            echo '=== STEP 6: Submitting compilation job ==='
-            cp /z/z89674/ASM2JCL \"//'Z89674.JCL(ASM2PGM)'\"
+            echo '=== STEP 7: Submitting compilation job ==='
+            tso \"DELETE 'Z89674.JCL(ASM2PGM)'\" 2>&1 || echo 'JCL member did not exist'
+            cp -B /z/z89674/ASM2JCL \"//'Z89674.JCL(ASM2PGM)'\" 2>&1 || {
+              echo 'cp -B failed, trying OPUT...'
+              tso \"OPUT '/z/z89674/ASM2JCL' 'Z89674.JCL(ASM2PGM)'\" 2>&1
+            }
             submit \"//'Z89674.JCL(ASM2PGM)'\"
             
-            echo '=== STEP 7: Waiting for compilation ==='
-            sleep 15
+            echo '=== STEP 8: Waiting for compilation ==='
+            sleep 20
             
-            echo '=== STEP 8: Submitting CHKASM2 validation job ==='
+            echo '=== STEP 9: Submitting CHKASM2 validation job ==='
             submit \"//'ZXP.PUBLIC.JCL(CHKASM2)'\"
             echo 'Validation job submitted!'
           "
