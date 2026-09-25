@@ -1,54 +1,54 @@
-name: NODE1 Challenge Automation
+
+name: ASM2 Challenge Automation
 
 on:
   workflow_dispatch:
 
 jobs:
-  node1-fix:
+  asm2-fix:
     runs-on: ubuntu-latest
     steps:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
 
-      - name: Find Node.js and Run Server
+      - name: Modify and Compile Assembler Program
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '--- Sourcing profile to load PATH ---'
-            source /etc/profile 2>/dev/null || source ~/.profile 2>/dev/null || true
+            echo '=== SOURCING PROFILE ==='
+            source /etc/profile 2>/dev/null || true
             
-            echo '--- Step 1: Finding Node.js installation ---'
-            which node
-            node --version
+            echo '=== STEP 1: Create Python script file ==='
+            echo 'from zoautil_py import datasets' > /z/z89674/fix_asm.py
+            echo 'sq = chr(39)' >> /z/z89674/fix_asm.py
+            echo 's = datasets.read(\"ZXP.PUBLIC.SOURCE(ASMPGM)\")' >> /z/z89674/fix_asm.py
+            echo 's = s.replace(\"SR 2,2\", \"SR 7,7\")' >> /z/z89674/fix_asm.py
+            echo 's = s.replace(\"L 2,=C\", \"L 6,=C\")' >> /z/z89674/fix_asm.py
+            echo 's = s.replace(\"LA 2,=C\", \"LA 6,=C\")' >> /z/z89674/fix_asm.py
+            echo 's = s.replace(\"L 2,=F\" + sq + \"4\" + sq, \"L 6,=F\" + sq + \"10\" + sq)' >> /z/z89674/fix_asm.py
+            echo 's = s.replace(\"L 3,=F\" + sq + \"1\" + sq, \"L 7,=F\" + sq + \"0\" + sq)' >> /z/z89674/fix_asm.py
+            echo 's = s.replace(\"A 3,=F\" + sq + \"1\" + sq, \"A 7,=F\" + sq + \"5\" + sq)' >> /z/z89674/fix_asm.py
+            echo 's = s.replace(\"BCT 2,LOOP\", \"BCT 6,LOOP\")' >> /z/z89674/fix_asm.py
+            echo 's = s.replace(\"LH 3,HALFCON\", \"LH 7,HALFCON\")' >> /z/z89674/fix_asm.py
+            echo 's = s.replace(\"A 3,FULLCON\", \"A 7,FULLCON\")' >> /z/z89674/fix_asm.py
+            echo 's = s.replace(\"ST 3,HEXCON\", \"ST 7,HEXCON\")' >> /z/z89674/fix_asm.py
+            echo 'datasets.write(\"Z89674.SOURCE(ASM2PGM)\", s)' >> /z/z89674/fix_asm.py
+            echo 'print(\"Source code updated successfully\")' >> /z/z89674/fix_asm.py
+            echo 'j = datasets.read(\"ZXP.PUBLIC.JCL(ASMPGM)\")' >> /z/z89674/fix_asm.py
+            echo 'j = j.replace(\"ASMPGM\", \"ASM2PGM\")' >> /z/z89674/fix_asm.py
+            echo 'datasets.write(\"Z89674.JCL(ASM2PGM)\", j)' >> /z/z89674/fix_asm.py
+            echo 'print(\"JCL updated successfully\")' >> /z/z89674/fix_asm.py
             
-            echo '--- Step 2: Creating node directory ---'
-            mkdir -p /z/z89674/node
+            echo '=== STEP 2: Run Python script ==='
+            cd /z/z89674
+            python3 fix_asm.py 2>&1
             
-            echo '--- Step 3: Copying source code from ZXP.PUBLIC.SOURCE(NODE1) ---'
-            cat \"//'ZXP.PUBLIC.SOURCE(NODE1)'\" > /z/z89674/node/program1.js
+            echo '=== STEP 3: Submitting Compilation Job ==='
+            submit \"//'Z89674.JCL(ASM2PGM)'\"
             
-            echo '--- Step 4: Modifying code to show actual port ---'
-            sed 's/port}/server.address().port}/g' /z/z89674/node/program1.js > /tmp/program1_fixed.js
-            mv /tmp/program1_fixed.js /z/z89674/node/program1.js
+            echo '=== STEP 4: Waiting for assembler ==='
+            sleep 30
             
-            echo '--- Step 5: Verifying modified code ---'
-            sed -n '15p' /z/z89674/node/program1.js
-            
-            echo '--- Step 6: Starting Node Server ---'
-            cd /z/z89674/node
-            node program1.js > /tmp/node_output.log 2>&1 &
-            SERVER_PID=\$!
-            echo \"Server PID: \$SERVER_PID\"
-            
-            echo '--- Step 7: Waiting 10 seconds for server to start ---'
-            sleep 10
-            
-            echo '--- Step 8: Checking server output ---'
-            cat /tmp/node_output.log
-            
-            echo '--- Step 9: Checking if node process is running ---'
-            ps -ef | grep \"program1\" | grep -v grep
-            
-            echo '--- Step 10: Submitting CHKNODE1 Validation Job ---'
-            submit \"//'ZXP.PUBLIC.JCL(CHKNODE1)'\"
+            echo '=== STEP 5: Submitting CHKASM2 ==='
+            submit \"//'ZXP.PUBLIC.JCL(CHKASM2)'\"
             echo 'Validation job submitted!'
           "
