@@ -14,33 +14,32 @@ jobs:
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
             echo '=== SOURCING PROFILES ==='
-            source /etc/profile 2>&1
-            source ~/.profile 2>&1
+            source /etc/profile 2>&1 || true
+            source ~/.profile 2>&1 || true
             
             echo '=== STEP 1: Deleting old dataset ==='
             tso \"DELETE 'Z89674.PYTHON.DATA'\" 2>&1 || echo 'Dataset did not exist'
             
             echo '=== STEP 2: Creating Python script directly ==='
-            cat > /z/z89674/program1.py << 'PYEOF'
-from zoautil_py import datasets
-import os
-
-#set user ID as the High Level Qualifier
-HLQ="z89674"
-
-# create a sequential dataset
-datasets.create("%s.PYTHON.DATA"% HLQ, dataset_type="seq", record_length=80, record_format="FB", primary_space="100k")
-
-# write your data in the dataset
-datasets.write("%s.PYTHON.DATA"% HLQ, content='THIS IS JUST CONTENT CREATED BY USING PYTHON')
-
-# check if the data is in the dataset
-print(datasets.read("%s.PYTHON.DATA"% HLQ))
-
-# get your username from the system and store it in user
-user=os.environ.get("USER")
-print('this program is executed by'+user)
-PYEOF
+            echo 'from zoautil_py import datasets' > /z/z89674/program1.py
+            echo 'import os' >> /z/z89674/program1.py
+            echo '' >> /z/z89674/program1.py
+            echo '#set user ID as the High Level Qualifier' >> /z/z89674/program1.py
+            echo 'HLQ=\"z89674\"' >> /z/z89674/program1.py
+            echo '' >> /z/z89674/program1.py
+            echo '# create a sequential dataset' >> /z/z89674/program1.py
+            echo 'datasets.create(\"%s.PYTHON.DATA\"% HLQ, dataset_type=\"seq\", record_length=80, record_format=\"FB\", primary_space=\"100k\")' >> /z/z89674/program1.py
+            echo '' >> /z/z89674/program1.py
+            echo '# write your data in the dataset' >> /z/z89674/program1.py
+            echo 'datasets.write(\"%s.PYTHON.DATA\"% HLQ, content=\"THIS IS JUST CONTENT CREATED BY USING PYTHON\")' >> /z/z89674/program1.py
+            echo '' >> /z/z89674/program1.py
+            echo '# check if the data is in the dataset' >> /z/z89674/program1.py
+            echo 'print(datasets.read(\"%s.PYTHON.DATA\"% HLQ))' >> /z/z89674/program1.py
+            echo '' >> /z/z89674/program1.py
+            echo '# get your username from the system and store it in user' >> /z/z89674/program1.py
+            echo 'user=os.environ.get(\"USER\")' >> /z/z89674/program1.py
+            echo '#print user' >> /z/z89674/program1.py
+            echo 'print(\"this program is executed by\"+user)' >> /z/z89674/program1.py
             
             echo '=== STEP 3: Verifying script content ==='
             cat /z/z89674/program1.py
