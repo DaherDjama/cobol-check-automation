@@ -1,3 +1,4 @@
+
 name: ASM2 Challenge Automation
 
 on:
@@ -14,11 +15,30 @@ jobs:
         run: |
           cat > fix_asm.py << 'PYEOF'
           from zoautil_py import datasets
+          import re
           sq = chr(39)
           
           # --- PART 1: Modify Source Code ---
           s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
-          s = s.replace("SR 2,2", "SR 7,7")
+          
+          # Replace ALL occurrences of register 2 with register 6
+          # Use regex to match "2," or " 2," patterns in instruction operands
+          s = re.sub(r'\b2,', '6,', s)
+          
+          # Replace ALL occurrences of register 3 with register 7
+          s = re.sub(r'\b3,', '7,', s)
+          
+          # Now fix the specific values
+          s = s.replace("=F" + sq + "4" + sq, "=F" + sq + "10" + sq)
+          s = s.replace("=F" + sq + "1" + sq, "=F" + sq + "0" + sq)  # Initialize sum to 0
+          s = s.replace("=F" + sq + "1" + sq, "=F" + sq + "5" + sq)  # Add 5 each loop
+          
+          # Wait, the above won't work correctly. Let me be more specific:
+          # Reset and do it properly
+          s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
+          
+          # Specific replacements in correct order
+          s = s.replace("SR 2,2", "SR 6,6")  # Clear register 6 (loop counter)
           s = s.replace("L 2,=C", "L 6,=C")
           s = s.replace("LA 2,=C", "LA 6,=C")
           s = s.replace("L 2,=F" + sq + "4" + sq, "L 6,=F" + sq + "10" + sq)
@@ -35,12 +55,10 @@ jobs:
           # --- PART 2: Modify JCL (Fixing line length issue) ---
           j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
           
-          # Split into lines, replace, and ensure max length is 80
           lines = j.split('\n')
           new_lines = []
           for line in lines:
               new_line = line.replace("ASMPGM", "ASM2PGM")
-              # Truncate to 80 chars to prevent BGYSC0709E error
               if len(new_line) > 80:
                   new_line = new_line[:80]
               new_lines.append(new_line)
@@ -53,18 +71,13 @@ jobs:
 
       - name: Copy script to remote and execute
         run: |
-          # Copy the Python script to the remote system
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no fix_asm.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/fix_asm.py
           
-          # Execute the script on the remote system
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/fix_asm.py"
           
-          # Submit the compilation job
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'Z89674.JCL(ASM2PGM)'"
           
-          # Wait for assembler
           sleep 30
           
-          # Submit the validation job
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'ZXP.PUBLIC.JCL(CHKASM2)'"
           echo 'Validation job submitted!'
