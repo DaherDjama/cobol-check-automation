@@ -13,8 +13,12 @@ jobs:
       - name: Setup and Run Python Script
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '--- Sourcing profile to load PATH ---'
+            echo '--- Sourcing profile to load PATH and LIBPATH ---'
             source /etc/profile 2>/dev/null || true
+            
+            echo '--- Checking Python availability ---'
+            which python3
+            python3 --version
             
             echo '--- Step 1: Deleting old dataset if it exists ---'
             tso \"DELETE 'Z89674.PYTHON.DATA'\" 2>/dev/null || echo 'Dataset did not exist'
@@ -31,9 +35,11 @@ jobs:
             
             echo '--- Step 5: Running Python Script ---'
             cd /z/z89674
-            python3 program1.py
+            python3 program1.py 2>&1
             
             echo '--- Step 6: Submitting CHKPYTH1 Validation Job ---'
             submit \"//'ZXP.PUBLIC.JCL(CHKPYTH1)'\"
             echo 'Validation job submitted!'
           "
+
+      
