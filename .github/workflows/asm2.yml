@@ -1,4 +1,3 @@
-
 name: ASM2 Challenge Automation
 
 on:
@@ -16,45 +15,44 @@ jobs:
           cat > fix_asm.py << 'PYEOF'
           from zoautil_py import datasets
           import re
-          sq = chr(39)
           
-          # --- PART 1: Modify Source Code ---
+          # Read the source code
           s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
           
-          # Replace ALL occurrences of register 2 with register 6
-          # Use regex to match "2," or " 2," patterns in instruction operands
+          print("=== ORIGINAL CODE (relevant lines) ===")
+          lines = s.split('\n')
+          for i, line in enumerate(lines):
+              if ' 2,' in line or ' 3,' in line or '=F' in line:
+                  print(f"{i}: {repr(line)}")
+          
+          # Use regex to replace ALL instances of register 2 with register 6
+          # Match patterns like " 2," " 2," at word boundaries
           s = re.sub(r'\b2,', '6,', s)
           
-          # Replace ALL occurrences of register 3 with register 7
+          # Use regex to replace ALL instances of register 3 with register 7
           s = re.sub(r'\b3,', '7,', s)
           
           # Now fix the specific values
-          s = s.replace("=F" + sq + "4" + sq, "=F" + sq + "10" + sq)
-          s = s.replace("=F" + sq + "1" + sq, "=F" + sq + "0" + sq)  # Initialize sum to 0
-          s = s.replace("=F" + sq + "1" + sq, "=F" + sq + "5" + sq)  # Add 5 each loop
+          # Replace =F'4' with =F'10' (loop count: 4 → 10)
+          s = re.sub(r"=F['\"]4['\"]", "=F'10'", s)
           
-          # Wait, the above won't work correctly. Let me be more specific:
-          # Reset and do it properly
-          s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
+          # Replace =F'1' with =F'0' for the initialization (first occurrence)
+          # and =F'5' for the add operation (second occurrence)
+          # Since we already changed register 3 to 7, we need to find L 7,=F'1' and A 7,=F'1'
+          s = re.sub(r"L 7,=F['\"]1['\"]", "L 7,=F'0'", s)
+          s = re.sub(r"A 7,=F['\"]1['\"]", "A 7,=F'5'", s)
           
-          # Specific replacements in correct order
-          s = s.replace("SR 2,2", "SR 6,6")  # Clear register 6 (loop counter)
-          s = s.replace("L 2,=C", "L 6,=C")
-          s = s.replace("LA 2,=C", "LA 6,=C")
-          s = s.replace("L 2,=F" + sq + "4" + sq, "L 6,=F" + sq + "10" + sq)
-          s = s.replace("L 3,=F" + sq + "1" + sq, "L 7,=F" + sq + "0" + sq)
-          s = s.replace("A 3,=F" + sq + "1" + sq, "A 7,=F" + sq + "5" + sq)
-          s = s.replace("BCT 2,LOOP", "BCT 6,LOOP")
-          s = s.replace("LH 3,HALFCON", "LH 7,HALFCON")
-          s = s.replace("A 3,FULLCON", "A 7,FULLCON")
-          s = s.replace("ST 3,HEXCON", "ST 7,HEXCON")
+          print("\n=== MODIFIED CODE (relevant lines) ===")
+          lines = s.split('\n')
+          for i, line in enumerate(lines):
+              if ' 6,' in line or ' 7,' in line or '=F' in line:
+                  print(f"{i}: {repr(line)}")
           
           datasets.write("Z89674.SOURCE(ASM2PGM)", s)
-          print("Source code updated successfully")
+          print("\nSource code updated successfully")
           
-          # --- PART 2: Modify JCL (Fixing line length issue) ---
+          # Modify JCL
           j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
-          
           lines = j.split('\n')
           new_lines = []
           for line in lines:
@@ -62,9 +60,7 @@ jobs:
               if len(new_line) > 80:
                   new_line = new_line[:80]
               new_lines.append(new_line)
-          
           j_fixed = '\n'.join(new_lines)
-          
           datasets.write("Z89674.JCL(ASM2PGM)", j_fixed)
           print("JCL updated successfully")
           PYEOF
@@ -72,12 +68,8 @@ jobs:
       - name: Copy script to remote and execute
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no fix_asm.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/fix_asm.py
-          
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/fix_asm.py"
-          
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'Z89674.JCL(ASM2PGM)'"
-          
           sleep 30
-          
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'ZXP.PUBLIC.JCL(CHKASM2)'"
           echo 'Validation job submitted!'
