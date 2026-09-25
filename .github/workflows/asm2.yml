@@ -16,7 +16,7 @@ jobs:
           from zoautil_py import datasets
           sq = chr(39)
           
-          # Read and Modify Source
+          # --- PART 1: Modify Source Code ---
           s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
           s = s.replace("SR 2,2", "SR 7,7")
           s = s.replace("L 2,=C", "L 6,=C")
@@ -32,10 +32,22 @@ jobs:
           datasets.write("Z89674.SOURCE(ASM2PGM)", s)
           print("Source code updated successfully")
           
-          # Read and Modify JCL
+          # --- PART 2: Modify JCL (Fixing line length issue) ---
           j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
-          j = j.replace("ASMPGM", "ASM2PGM")
-          datasets.write("Z89674.JCL(ASM2PGM)", j)
+          
+          # Split into lines, replace, and ensure max length is 80
+          lines = j.split('\n')
+          new_lines = []
+          for line in lines:
+              new_line = line.replace("ASMPGM", "ASM2PGM")
+              # Truncate to 80 chars to prevent BGYSC0709E error
+              if len(new_line) > 80:
+                  new_line = new_line[:80]
+              new_lines.append(new_line)
+          
+          j_fixed = '\n'.join(new_lines)
+          
+          datasets.write("Z89674.JCL(ASM2PGM)", j_fixed)
           print("JCL updated successfully")
           PYEOF
 
