@@ -1,3 +1,4 @@
+
 name: NODE1 Challenge Automation
 
 on:
@@ -20,8 +21,9 @@ jobs:
             cat \"//'ZXP.PUBLIC.SOURCE(NODE1)'\" > /z/z89674/node/program1.js
             
             echo '--- Step 3: Modifying code to show actual port (Line 15) ---'
-            # We replace 'port}' with 'server.address().port}' to avoid shell errors with \$ signs
-            sed -i 's/port}/server.address().port}/g' /z/z89674/node/program1.js
+            # Use sed without -i flag (z/OS doesn't support it), redirect to temp file
+            sed 's/port}/server.address().port}/g' /z/z89674/node/program1.js > /tmp/program1_fixed.js
+            mv /tmp/program1_fixed.js /z/z89674/node/program1.js
             
             echo '--- Step 4: Starting Node Server in background ---'
             cd /z/z89674/node
