@@ -1,4 +1,3 @@
-
 name: NODE1 Challenge Automation
 
 on:
@@ -11,40 +10,50 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
 
-      - name: Setup and Run Node Server
+      - name: Find Node.js and Run Server
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '--- Step 1: Creating node directory ---'
+            echo '--- Step 1: Finding Node.js installation ---'
+            # Search for node executable in common locations
+            NODE_PATH=\$(which node 2>/dev/null || find /usr /opt -name node -type f 2>/dev/null | head -1)
+            echo \"Node.js found at: \$NODE_PATH\"
+            
+            if [ -z \"\$NODE_PATH\" ]; then
+              echo 'ERROR: Node.js not found!'
+              exit 1
+            fi
+            
+            echo '--- Step 2: Creating node directory ---'
             mkdir -p /z/z89674/node
             
-            echo '--- Step 2: Copying source code from ZXP.PUBLIC.SOURCE(NODE1) ---'
+            echo '--- Step 3: Copying source code from ZXP.PUBLIC.SOURCE(NODE1) ---'
             cat \"//'ZXP.PUBLIC.SOURCE(NODE1)'\" > /z/z89674/node/program1.js
             
-            echo '--- Step 3: Modifying code to show actual port ---'
+            echo '--- Step 4: Modifying code to show actual port ---'
             sed 's/port}/server.address().port}/g' /z/z89674/node/program1.js > /tmp/program1_fixed.js
             mv /tmp/program1_fixed.js /z/z89674/node/program1.js
             
-            echo '--- Step 4: Verifying modified code ---'
+            echo '--- Step 5: Verifying modified code ---'
             sed -n '15p' /z/z89674/node/program1.js
             
-            echo '--- Step 5: Starting Node Server ---'
+            echo '--- Step 6: Starting Node Server ---'
             cd /z/z89674/node
             
-            # Start server in background and capture output
-            node program1.js > /tmp/node_output.log 2>&1 &
+            # Use full path to node executable
+            \$NODE_PATH program1.js > /tmp/node_output.log 2>&1 &
             SERVER_PID=\$!
             echo \"Server PID: \$SERVER_PID\"
             
-            echo '--- Step 6: Waiting 10 seconds for server to start ---'
+            echo '--- Step 7: Waiting 10 seconds for server to start ---'
             sleep 10
             
-            echo '--- Step 7: Checking server output ---'
+            echo '--- Step 8: Checking server output ---'
             cat /tmp/node_output.log
             
-            echo '--- Step 8: Checking if node process is running ---'
-            ps -ef | grep \"node program1\" | grep -v grep
+            echo '--- Step 9: Checking if node process is running ---'
+            ps -ef | grep \"program1\" | grep -v grep
             
-            echo '--- Step 9: Submitting CHKNODE1 Validation Job ---'
+            echo '--- Step 10: Submitting CHKNODE1 Validation Job ---'
             submit \"//'ZXP.PUBLIC.JCL(CHKNODE1)'\"
             echo 'Validation job submitted!'
           "
