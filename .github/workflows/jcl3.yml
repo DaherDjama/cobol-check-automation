@@ -16,43 +16,51 @@ jobs:
           import re
           from zoautil_py import datasets
 
-          # 1. Read the reference REXX (WSL$) to find required datasets
+          # 1. Read the reference REXX (WSL$)
           print("Reading reference WSL$...")
           try:
               wsl_ref = datasets.read("ZXP.PUBLIC.EXEC(WSL$)")
+              print("--- WSL$ CONTENT (First 20 lines) ---")
+              print("\n".join(wsl_ref.split("\n")[:20]))
+              print("-------------------------------------")
           except Exception as e:
               print(f"Error reading WSL$: {e}")
               wsl_ref = ""
 
-          # Extract ALLOC statements: ALLOC FI(DDNAME) DA('DATASET.NAME')
-          # This regex finds the logical name (FI) and physical name (DA)
-          allocs = re.findall(r"ALLOC\s+FI\((\w+)\)\s+DA\('?([^'\)]+)'?", wsl_ref)
-          print(f"Found allocations in WSL$: {allocs}")
+          # 2. Extract ALLOC statements
+          # Regex explanation:
+          # ALLOC\s+FI\((\w+)\)  -> Matches ALLOC FI(DDNAME)
+          # \s+DA\('?             -> Matches DA( or DA('
+          # ([^']*)               -> Captures everything until a quote (handles nested parens like DATA(TEAMS))
+          # '?\)                  -> Matches optional quote and closing paren
+          allocs = re.findall(r"ALLOC\s+FI\((\w+)\)\s+DA\('?([^']*)'?\)", wsl_ref)
+          print(f"Found allocations: {allocs}")
 
-          # 2. Read the broken JCL
+          # 3. Read the broken JCL
           print("Reading WSLJCL...")
           try:
               jcl = datasets.read("Z89674.JCL(WSLJCL)")
           except Exception as e:
-              print(f"Error reading WSLJCL: {e}. Did you run chalcopy?")
+              print(f"Error reading WSLJCL: {e}")
               jcl = ""
 
           if not jcl:
               print("No JCL found. Exiting.")
               exit(1)
 
-          # 3. Fix the JCL by injecting DD statements
+          # 4. Fix the JCL
           lines = jcl.split("\n")
           new_lines = []
           dd_injected = False
 
           for line in lines:
-              # Look for //SYSTSIN (the input stream for REXX) and insert DDs before it
+              # Inject DD statements before //SYSTSIN
               if line.strip().startswith("//SYSTSIN") and not dd_injected:
                   print("Injecting DD statements before SYSTSIN...")
                   for ddname, dsn in allocs:
-                      # Create standard DD statement: //DDNAME DD DSN=...,DISP=SHR
-                      dd_stmt = f"//{ddname} DD DSN={dsn},DISP=SHR"
+                      # Clean up dataset name (remove spaces if any)
+                      dsn_clean = dsn.strip()
+                      dd_stmt = f"//{ddname} DD DSN={dsn_clean},DISP=SHR"
                       new_lines.append(dd_stmt)
                       print(f"  Added: {dd_stmt}")
                   dd_injected = True
@@ -61,8 +69,7 @@ jobs:
 
           final_jcl = "\n".join(new_lines)
 
-          # 4. Write the fixed JCL back to the dataset
-          # Truncate lines to 80 chars to prevent dataset write errors
+          # 5. Write back
           final_lines = [l[:80] for l in final_jcl.split("\n")]
           try:
               datasets.write("Z89674.JCL(WSLJCL)", "\n".join(final_lines))
@@ -77,23 +84,23 @@ jobs:
 
       - name: Run Setup and Fix
         run: |
-          # 1. Submit setup job (chalcopy) to create WSLJCL
+          # 1. Submit setup job
           echo "Submitting setup job..."
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; submit //'ZXP.PUBLIC.JCL(chalcopy)'"
-          echo "Waiting for setup job to finish..."
+          echo "Waiting for setup job..."
           sleep 20
 
-          # 2. Run the Python script to fix the JCL
+          # 2. Run fix script
           echo "Running fix script..."
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/fix_jcl3.py"
 
-          # 3. Submit the fixed JCL
+          # 3. Submit fixed JCL
           echo "Submitting fixed WSLJCL..."
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'Z89674.JCL(WSLJCL)'"
-          echo "Waiting for JCL3 job to finish..."
+          echo "Waiting for JCL3 job..."
           sleep 30
 
-          # 4. Submit validation job
+          # 4. Submit validation
           echo "Submitting CHKJCL3..."
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'ZXP.PUBLIC.JCL(CHKJCL3)'"
           echo "Validation job submitted!"
