@@ -10,86 +10,90 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
 
-      - name: Setup and Fix JCL3
+      - name: Create Python script locally
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '=== SOURCING PROFILE ==='
-            source /etc/profile 2>/dev/null || true
-            
-            echo '=== STEP 1: Submitting setup job (chalcopy) ==='
-            submit \"//'ZXP.PUBLIC.JCL(chalcopy)'\"
-            echo 'Waiting for setup job to finish...'
-            sleep 20
-            
-            echo '=== STEP 2: Auto-fixing WSLJCL using Python ==='
-            python3 -c '
-            import re
-            from zoautil_py import datasets
+          cat > fix_jcl3.py << 'PYEOF'
+          import re
+          from zoautil_py import datasets
 
-            # 1. Read the reference REXX (WSL$) to find required datasets
-            print("Reading reference WSL$...")
-            wsl_ref = datasets.read("ZXP.PUBLIC.EXEC(WSL$)")
-            
-            # Extract ALLOC statements: ALLOC FI(DDNAME) DA(DATASET.NAME)
-            # Handles both quoted and unquoted dataset names
-            allocs = re.findall(r\"ALLOC\s+FI\((\w+)\)\s+DA\(\\'?([^\\'\)]+)\\'?\", wsl_ref)
-            print(f\"Found {len(allocs)} allocations in WSL$: {allocs}\")
-            
-            # 2. Read the broken JCL
-            print("Reading WSLJCL...")
-            jcl = datasets.read(\"Z89674.JCL(WSLJCL)\")
-            
-            # 3. Fix common JCL errors for REXX execution
-            
-            # Fix A: Ensure EXEC PGM is IKJEFT01 (required for REXX)
-            # If it says EXEC PGM=WSL, change it to IKJEFT01
-            jcl = re.sub(r\"(//\w+\s+EXEC\s+)PGM=\w+\", r\"\1PGM=IKJEFT01\", jcl)
-            
-            # Fix B: Ensure SYSTSPRT exists (REXX output goes here)
-            if \"//SYSTSPRT\" not in jcl:
-                jcl = jcl.replace(\"//SYSPRINT\", \"//SYSTSPRT\") # Common mistake
-                
-            # 4. Inject missing DD statements
-            # We look for //SYSTSIN (the input stream) and insert DDs before it
-            lines = jcl.split(\"\\n\")
-            new_lines = []
-            dd_injected = False
-            
-            for line in lines:
-                # If we find SYSTSIN and haven't injected DDs yet, inject them now
-                if line.strip().startswith(\"//SYSTSIN\") and not dd_injected:
-                    print(\"Injecting DD statements before SYSTSIN...\")
-                    for ddname, dsn in allocs:
-                        # Create standard DD statement
-                        dd_stmt = f\"//{ddname} DD DSN={dsn},DISP=SHR\"
-                        new_lines.append(dd_stmt)
-                        print(f\"  Added: {dd_stmt}\")
-                    dd_injected = True
-                
-                new_lines.append(line)
-                
-            # If no SYSTSIN found, append to end (fallback)
-            if not dd_injected:
-                print(\"Warning: SYSTSIN not found, appending DDs to end.\")
-                for ddname, dsn in allocs:
-                    new_lines.append(f\"//{ddname} DD DSN={dsn},DISP=SHR\")
+          # 1. Read the reference REXX (WSL$) to find required datasets
+          print("Reading reference WSL$...")
+          try:
+              wsl_ref = datasets.read("ZXP.PUBLIC.EXEC(WSL$)")
+          except Exception as e:
+              print(f"Error reading WSL$: {e}")
+              wsl_ref = ""
 
-            final_jcl = \"\\n\".join(new_lines)
-            
-            # 5. Write the fixed JCL back
-            # Truncate lines to 80 chars just in case
-            final_lines = [l[:80] for l in final_jcl.split(\"\\n\")]
-            datasets.write(\"Z89674.JCL(WSLJCL)\", \"\\n\".join(final_lines))
-            print(\"WSLJCL has been fixed and saved!\")
-            '
-            
-            echo '=== STEP 3: Submitting fixed WSLJCL ==='
-            submit \"//'Z89674.JCL(WSLJCL)'\"
-            
-            echo '=== STEP 4: Waiting for job to finish ==='
-            sleep 30
-            
-            echo '=== STEP 5: Submitting CHKJCL3 validation job ==='
-            submit \"//'ZXP.PUBLIC.JCL(CHKJCL3)'\"
-            echo 'Validation job submitted!'
-          "
+          # Extract ALLOC statements: ALLOC FI(DDNAME) DA('DATASET.NAME')
+          # This regex finds the logical name (FI) and physical name (DA)
+          allocs = re.findall(r"ALLOC\s+FI\((\w+)\)\s+DA\('?([^'\)]+)'?", wsl_ref)
+          print(f"Found allocations in WSL$: {allocs}")
+
+          # 2. Read the broken JCL
+          print("Reading WSLJCL...")
+          try:
+              jcl = datasets.read("Z89674.JCL(WSLJCL)")
+          except Exception as e:
+              print(f"Error reading WSLJCL: {e}. Did you run chalcopy?")
+              jcl = ""
+
+          if not jcl:
+              print("No JCL found. Exiting.")
+              exit(1)
+
+          # 3. Fix the JCL by injecting DD statements
+          lines = jcl.split("\n")
+          new_lines = []
+          dd_injected = False
+
+          for line in lines:
+              # Look for //SYSTSIN (the input stream for REXX) and insert DDs before it
+              if line.strip().startswith("//SYSTSIN") and not dd_injected:
+                  print("Injecting DD statements before SYSTSIN...")
+                  for ddname, dsn in allocs:
+                      # Create standard DD statement: //DDNAME DD DSN=...,DISP=SHR
+                      dd_stmt = f"//{ddname} DD DSN={dsn},DISP=SHR"
+                      new_lines.append(dd_stmt)
+                      print(f"  Added: {dd_stmt}")
+                  dd_injected = True
+
+              new_lines.append(line)
+
+          final_jcl = "\n".join(new_lines)
+
+          # 4. Write the fixed JCL back to the dataset
+          # Truncate lines to 80 chars to prevent dataset write errors
+          final_lines = [l[:80] for l in final_jcl.split("\n")]
+          try:
+              datasets.write("Z89674.JCL(WSLJCL)", "\n".join(final_lines))
+              print("WSLJCL updated successfully!")
+          except Exception as e:
+              print(f"Error writing WSLJCL: {e}")
+          PYEOF
+
+      - name: Copy script to remote
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no fix_jcl3.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/fix_jcl3.py
+
+      - name: Run Setup and Fix
+        run: |
+          # 1. Submit setup job (chalcopy) to create WSLJCL
+          echo "Submitting setup job..."
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; submit //'ZXP.PUBLIC.JCL(chalcopy)'"
+          echo "Waiting for setup job to finish..."
+          sleep 20
+
+          # 2. Run the Python script to fix the JCL
+          echo "Running fix script..."
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/fix_jcl3.py"
+
+          # 3. Submit the fixed JCL
+          echo "Submitting fixed WSLJCL..."
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'Z89674.JCL(WSLJCL)'"
+          echo "Waiting for JCL3 job to finish..."
+          sleep 30
+
+          # 4. Submit validation job
+          echo "Submitting CHKJCL3..."
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'ZXP.PUBLIC.JCL(CHKJCL3)'"
+          echo "Validation job submitted!"
