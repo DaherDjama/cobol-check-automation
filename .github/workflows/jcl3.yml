@@ -1,0 +1,95 @@
+name: JCL3 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  jcl3-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get install -y sshpass
+
+      - name: Setup and Fix JCL3
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
+            echo '=== SOURCING PROFILE ==='
+            source /etc/profile 2>/dev/null || true
+            
+            echo '=== STEP 1: Submitting setup job (chalcopy) ==='
+            submit \"//'ZXP.PUBLIC.JCL(chalcopy)'\"
+            echo 'Waiting for setup job to finish...'
+            sleep 20
+            
+            echo '=== STEP 2: Auto-fixing WSLJCL using Python ==='
+            python3 -c '
+            import re
+            from zoautil_py import datasets
+
+            # 1. Read the reference REXX (WSL$) to find required datasets
+            print("Reading reference WSL$...")
+            wsl_ref = datasets.read("ZXP.PUBLIC.EXEC(WSL$)")
+            
+            # Extract ALLOC statements: ALLOC FI(DDNAME) DA(DATASET.NAME)
+            # Handles both quoted and unquoted dataset names
+            allocs = re.findall(r\"ALLOC\s+FI\((\w+)\)\s+DA\(\\'?([^\\'\)]+)\\'?\", wsl_ref)
+            print(f\"Found {len(allocs)} allocations in WSL$: {allocs}\")
+            
+            # 2. Read the broken JCL
+            print("Reading WSLJCL...")
+            jcl = datasets.read(\"Z89674.JCL(WSLJCL)\")
+            
+            # 3. Fix common JCL errors for REXX execution
+            
+            # Fix A: Ensure EXEC PGM is IKJEFT01 (required for REXX)
+            # If it says EXEC PGM=WSL, change it to IKJEFT01
+            jcl = re.sub(r\"(//\w+\s+EXEC\s+)PGM=\w+\", r\"\1PGM=IKJEFT01\", jcl)
+            
+            # Fix B: Ensure SYSTSPRT exists (REXX output goes here)
+            if \"//SYSTSPRT\" not in jcl:
+                jcl = jcl.replace(\"//SYSPRINT\", \"//SYSTSPRT\") # Common mistake
+                
+            # 4. Inject missing DD statements
+            # We look for //SYSTSIN (the input stream) and insert DDs before it
+            lines = jcl.split(\"\\n\")
+            new_lines = []
+            dd_injected = False
+            
+            for line in lines:
+                # If we find SYSTSIN and haven't injected DDs yet, inject them now
+                if line.strip().startswith(\"//SYSTSIN\") and not dd_injected:
+                    print(\"Injecting DD statements before SYSTSIN...\")
+                    for ddname, dsn in allocs:
+                        # Create standard DD statement
+                        dd_stmt = f\"//{ddname} DD DSN={dsn},DISP=SHR\"
+                        new_lines.append(dd_stmt)
+                        print(f\"  Added: {dd_stmt}\")
+                    dd_injected = True
+                
+                new_lines.append(line)
+                
+            # If no SYSTSIN found, append to end (fallback)
+            if not dd_injected:
+                print(\"Warning: SYSTSIN not found, appending DDs to end.\")
+                for ddname, dsn in allocs:
+                    new_lines.append(f\"//{ddname} DD DSN={dsn},DISP=SHR\")
+
+            final_jcl = \"\\n\".join(new_lines)
+            
+            # 5. Write the fixed JCL back
+            # Truncate lines to 80 chars just in case
+            final_lines = [l[:80] for l in final_jcl.split(\"\\n\")]
+            datasets.write(\"Z89674.JCL(WSLJCL)\", \"\\n\".join(final_lines))
+            print(\"WSLJCL has been fixed and saved!\")
+            '
+            
+            echo '=== STEP 3: Submitting fixed WSLJCL ==='
+            submit \"//'Z89674.JCL(WSLJCL)'\"
+            
+            echo '=== STEP 4: Waiting for job to finish ==='
+            sleep 30
+            
+            echo '=== STEP 5: Submitting CHKJCL3 validation job ==='
+            submit \"//'ZXP.PUBLIC.JCL(CHKJCL3)'\"
+            echo 'Validation job submitted!'
+          "
