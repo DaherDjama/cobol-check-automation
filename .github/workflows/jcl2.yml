@@ -1,57 +1,106 @@
-name: JCL2 Challenge Automation
+name: JCL3 Challenge Automation
 
 on:
   workflow_dispatch:
 
 jobs:
-  jcl2-fix:
+  jcl3-fix:
     runs-on: ubuntu-latest
     steps:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
 
-      - name: Delete Old OUTPUT and Create New PDS
+      - name: Create Python script locally
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '--- Deleting old OUTPUT dataset ---'
-            tso \"DELETE 'Z89674.OUTPUT'\" 2>&1 || echo 'Delete attempted'
-            
-            echo '--- Creating OUTPUT as PDS ---'
-            tso \"ALLOCATE DATASET('Z89674.OUTPUT') NEW SPACE(1,1) TRACKS LRECL(80) RECFM(F,B) BLKSIZE(3200) DSORG(PO) DIR(5)\" 2>&1 || echo 'Allocation attempted'
-          "
+          cat > fix_jcl3.py << 'PYEOF'
+          import re
+          from zoautil_py import datasets
 
-      - name: Fix JCL with ARTIST DD Statement
+          # 1. Read the reference REXX (WSL$)
+          print("Reading reference WSL$...")
+          try:
+              wsl_ref = datasets.read("ZXP.PUBLIC.EXEC(WSL$)")
+              print("--- WSL$ CONTENT (First 20 lines) ---")
+              print("\n".join(wsl_ref.split("\n")[:20]))
+              print("-------------------------------------")
+          except Exception as e:
+              print(f"Error reading WSL$: {e}")
+              wsl_ref = ""
+
+          # 2. Extract ALLOC statements
+          # Regex explanation:
+          # ALLOC\s+FI\((\w+)\)  -> Matches ALLOC FI(DDNAME)
+          # \s+DA\('?             -> Matches DA( or DA('
+          # ([^']*)               -> Captures everything until a quote (handles nested parens like DATA(TEAMS))
+          # '?\)                  -> Matches optional quote and closing paren
+          allocs = re.findall(r"ALLOC\s+FI\((\w+)\)\s+DA\('?([^']*)'?\)", wsl_ref)
+          print(f"Found allocations: {allocs}")
+
+          # 3. Read the broken JCL
+          print("Reading WSLJCL...")
+          try:
+              jcl = datasets.read("Z89674.JCL(WSLJCL)")
+          except Exception as e:
+              print(f"Error reading WSLJCL: {e}")
+              jcl = ""
+
+          if not jcl:
+              print("No JCL found. Exiting.")
+              exit(1)
+
+          # 4. Fix the JCL
+          lines = jcl.split("\n")
+          new_lines = []
+          dd_injected = False
+
+          for line in lines:
+              # Inject DD statements before //SYSTSIN
+              if line.strip().startswith("//SYSTSIN") and not dd_injected:
+                  print("Injecting DD statements before SYSTSIN...")
+                  for ddname, dsn in allocs:
+                      # Clean up dataset name (remove spaces if any)
+                      dsn_clean = dsn.strip()
+                      dd_stmt = f"//{ddname} DD DSN={dsn_clean},DISP=SHR"
+                      new_lines.append(dd_stmt)
+                      print(f"  Added: {dd_stmt}")
+                  dd_injected = True
+
+              new_lines.append(line)
+
+          final_jcl = "\n".join(new_lines)
+
+          # 5. Write back
+          final_lines = [l[:80] for l in final_jcl.split("\n")]
+          try:
+              datasets.write("Z89674.JCL(WSLJCL)", "\n".join(final_lines))
+              print("WSLJCL updated successfully!")
+          except Exception as e:
+              print(f"Error writing WSLJCL: {e}")
+          PYEOF
+
+      - name: Copy script to remote
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '--- Creating Fixed JCL with ARTIST ---'
-            echo '//JES2JOB1  JOB ,MSGLEVEL=(2,0),CLASS=7' > /tmp/fixed_jcl.txt
-            echo \"//COMBINE   EXEC PGM=IRXJCL,PARM='COMBINE'\" >> /tmp/fixed_jcl.txt
-            echo '//SYSEXEC   DD DSN=ZXP.PUBLIC.EXEC,DISP=SHR' >> /tmp/fixed_jcl.txt
-            echo '//SYSTSPRT  DD DSN=&SYSUID..OUTPUT(GUITAR),DISP=SHR' >> /tmp/fixed_jcl.txt
-            echo '//SYSTSIN   DD DUMMY' >> /tmp/fixed_jcl.txt
-            echo '//NICKNAME  DD DSN=ZXP.PUBLIC.SOURCE(NICKNAME),DISP=SHR' >> /tmp/fixed_jcl.txt
-            echo '//BRAND     DD DSN=ZXP.PUBLIC.SOURCE(BRAND),DISP=SHR' >> /tmp/fixed_jcl.txt
-            echo '//ARTIST    DD DSN=ZXP.PUBLIC.SOURCE(ARTIST),DISP=SHR' >> /tmp/fixed_jcl.txt
-            
-            echo '--- Copying Fixed JCL to Mainframe Dataset ---'
-            cp /tmp/fixed_jcl.txt \"//'Z89674.JCL(JES2JOB1)'\"
-            
-            echo '--- Verifying Updated JCL ---'
-            cat \"//'Z89674.JCL(JES2JOB1)'\"
-            
-            echo '--- Submitting Fixed Job ---'
-            submit \"//'Z89674.JCL(JES2JOB1)'\"
-            echo 'Job submitted! Waiting for completion...'
-            sleep 15
-          "
-      
-      - name: Check Job Output and Submit Validation
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no fix_jcl3.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/fix_jcl3.py
+
+      - name: Run Setup and Fix
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '--- Checking OUTPUT(GUITAR) content ---'
-            cat \"//'Z89674.OUTPUT(GUITAR)'\" 2>&1 || echo 'Output not found'
-            
-            echo '--- Submitting CHKJCL2 Validation Job ---'
-            submit \"//'ZXP.PUBLIC.JCL(CHKJCL2)'\"
-            echo 'Validation job submitted!'
-          "
+          # 1. Submit setup job
+          echo "Submitting setup job..."
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; submit //'ZXP.PUBLIC.JCL(chalcopy)'"
+          echo "Waiting for setup job..."
+          sleep 20
+
+          # 2. Run fix script
+          echo "Running fix script..."
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/fix_jcl3.py"
+
+          # 3. Submit fixed JCL
+          echo "Submitting fixed WSLJCL..."
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'Z89674.JCL(WSLJCL)'"
+          echo "Waiting for JCL3 job..."
+          sleep 30
+
+          # 4. Submit validation
+          echo "Submitting CHKJCL3..."
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'ZXP.PUBLIC.JCL(CHKJCL3)'"
+          echo "Validation job submitted!"
