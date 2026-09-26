@@ -1,4 +1,3 @@
-
 name: ASM2 Challenge Automation
 
 on:
@@ -14,32 +13,33 @@ jobs:
       - name: Create Python script locally
         run: |
           cat > fix_asm.py << 'PYEOF'
+          import re
           from zoautil_py import datasets
           
           # Read the source code
           s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
           
-          # Make all replacements
-          # Register 2 -> Register 6
+          # Replace register 2 with 6 (handling various spacings)
           s = s.replace(' 2,', ' 6,')
           s = s.replace(',2,', ',6,')
           s = s.replace(',2 ', ',6 ')
           
-          # Register 3 -> Register 7
+          # Replace register 3 with 7 (handling various spacings)
           s = s.replace(' 3,', ' 7,')
           s = s.replace(',3,', ',7,')
           s = s.replace(',3 ', ',7 ')
           
           # Fix specific values
           s = s.replace("=F'4'", "=F'10'")  # Loop count: 4 -> 10
-          s = s.replace("L 7,=F'1'", "L 7,=F'0'")  # Initialize sum to 0
-          s = s.replace("A 7,=F'1'", "A 7,=F'5'")  # Add 5 each loop
           
-          # Write to USS file (remove line feeds, truncate to 80 chars)
+          # Use regex to handle variable spacing (e.g., "L  7,=F'1'")
+          s = re.sub(r"L\s+7,=F'1'", "L 7,=F'0'", s)  # Initialize sum to 0
+          s = re.sub(r"A\s+7,=F'1'", "A 7,=F'5'", s)  # Add 5 each loop
+          
+          # Write to USS file (truncate to 80 chars to prevent dataset write errors)
           lines = s.split('\n')
           with open('/z/z89674/ASM2PGM.txt', 'w') as f:
               for line in lines:
-                  # Remove any trailing whitespace and truncate to 80 chars
                   clean_line = line.rstrip()[:80]
                   f.write(clean_line + '\n')
           print("Source USS file created")
@@ -58,38 +58,38 @@ jobs:
 
       - name: Copy script, create datasets, and execute
         run: |
-          # Copy Python script to remote
+          # 1. Copy Python script to remote
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no fix_asm.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/fix_asm.py
           
-          # Run Python script to create USS files
+          # 2. Run Python script to create USS files
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/fix_asm.py"
           
-          # Delete old dataset members if they exist
+          # 3. Delete old dataset members if they exist
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
             tso \"DELETE 'Z89674.SOURCE(ASM2PGM)'\" 2>/dev/null || echo 'Source member did not exist'
             tso \"DELETE 'Z89674.JCL(ASM2PGM)'\" 2>/dev/null || echo 'JCL member did not exist'
           "
           
-          # Copy USS files to datasets using cp with explicit format
+          # 4. Copy USS files to datasets using TSO OPUT (the most reliable method on z/OS)
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            cp -F recfm=fb,lrecl=80 /z/z89674/ASM2PGM.txt '//Z89674.SOURCE(ASM2PGM)' 2>&1
-            echo 'Source copy exit code:' \$?
-            cp -F recfm=fb,lrecl=80 /z/z89674/ASM2JCL.txt '//Z89674.JCL(ASM2PGM)' 2>&1
-            echo 'JCL copy exit code:' \$?
+            tso \"OPUT '/z/z89674/ASM2PGM.txt' 'Z89674.SOURCE(ASM2PGM)'\" 2>&1
+            echo 'Source OPUT exit code:' \$?
+            tso \"OPUT '/z/z89674/ASM2JCL.txt' 'Z89674.JCL(ASM2PGM)'\" 2>&1
+            echo 'JCL OPUT exit code:' \$?
           "
           
-          # Verify the dataset content
+          # 5. Verify the dataset content
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '=== SOURCE DATASET CONTENT (first 50 lines) ==='
-            head -50 \"//'Z89674.SOURCE(ASM2PGM)'\"
+            echo '=== SOURCE DATASET CONTENT (first 30 lines) ==='
+            head -30 \"//'Z89674.SOURCE(ASM2PGM)'\"
           "
           
-          # Submit Compilation Job
+          # 6. Submit Compilation Job
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'Z89674.JCL(ASM2PGM)'"
           
-          # Wait for assembler
+          # 7. Wait for assembler
           sleep 30
           
-          # Submit Validation Job
+          # 8. Submit Validation Job
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'ZXP.PUBLIC.JCL(CHKASM2)'"
           echo 'Validation job submitted!'
