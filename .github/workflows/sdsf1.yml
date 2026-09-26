@@ -1,4 +1,3 @@
-
 name: SDSF1 Challenge Automation
 
 on:
@@ -14,34 +13,40 @@ jobs:
       - name: Create automation script locally
         run: |
           cat > run_sdsf1.sh << 'SHEOF'
-          #!/bin/sh
-          source /etc/profile 2>/dev/null || true
+          #!/bin/ksh
+          # Load profile
+          . /etc/profile 2>/dev/null || true
 
           echo "=== STEP 1: Ensure OUTPUT dataset exists ==="
-          tso "ALLOCATE DSNAME('Z89674.OUTPUT') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS" 2>/dev/null || echo "OUTPUT dataset ready"
+          # Create the OUTPUT PDS if it doesn't exist
+          tso "ALLOCATE DSNAME('Z89674.OUTPUT') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS" 2>/dev/null
+          echo "OUTPUT dataset ready"
 
           echo "=== STEP 2: Submit CHKTSO4 job ==="
-          SUBMIT_OUT=$(submit 'ZXP.PUBLIC.JCL(CHKTSO4)' 2>&1)
-          echo "$SUBMIT_OUT"
-          
-          JOBID=$(echo "$SUBMIT_OUT" | grep -o 'JOB[0-9]*' | head -1)
+          # Submit the job and save output to a file to parse it safely
+          submit 'ZXP.PUBLIC.JCL(CHKTSO4)' > /z/z89674/sub_out.txt 2>&1
+          echo "Submit output:"
+          cat /z/z89674/sub_out.txt
+
+          echo "=== STEP 3: Extract Job ID ==="
+          # Use awk to find the Job ID (usually the second word on the line starting with JOB)
+          # Example line: "JOB JOB00123 submitted from data set..."
+          JOBID=$(awk '/JOB/ {print $2; exit}' /z/z89674/sub_out.txt)
           echo "Captured Job ID: $JOBID"
 
           if [ -z "$JOBID" ]; then
-              echo "Failed to capture Job ID. Exiting."
+              echo "Failed to capture Job ID. Check submit output above."
               exit 1
           fi
 
-          echo "=== STEP 3: Wait for job to finish ==="
+          echo "=== STEP 4: Wait for job to finish ==="
           sleep 45
 
-          echo "=== STEP 4: Save output using OPRINT ==="
-          OPRINT_OUT=$(tso "OPRINT JOB($JOBID) DD(SYSPRINT) DSN('Z89674.OUTPUT(TSO4)') SHR" 2>&1)
-          echo "$OPRINT_OUT"
-
-          echo "=== STEP 5: Verify dataset member ==="
-          tso "LISTDS 'Z89674.OUTPUT(TSO4)'" 2>&1 || echo "Member check failed"
-
+          echo "=== STEP 5: Save output using OPRINT ==="
+          # OPRINT copies the spool output to a dataset (equivalent to SDSF XDC)
+          # We target SYSPRINT which usually contains the main output
+          tso "OPRINT JOB($JOBID) DD(SYSPRINT) DSN('Z89674.OUTPUT(TSO4)') SHR"
+          
           echo "=== SDSF1 Challenge Automation Complete ==="
           SHEOF
           chmod +x run_sdsf1.sh
@@ -52,4 +57,5 @@ jobs:
 
       - name: Execute automation script
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "sh /z/z89674/run_sdsf1.sh"
+          # Use ksh (Korn Shell) which is standard on z/OS
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "ksh /z/z89674/run_sdsf1.sh"
