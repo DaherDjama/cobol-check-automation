@@ -1,3 +1,4 @@
+
 name: ASM2 Challenge Automation
 
 on:
@@ -16,7 +17,7 @@ jobs:
           import re
           from zoautil_py import datasets
           
-          # Read the source code
+          # Read and modify source code
           s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
           
           # Replace register 2 with 6
@@ -42,7 +43,7 @@ jobs:
           datasets.write("Z89674.SOURCE(ASM2PGM)", s_final)
           print("Source code written to dataset successfully")
           
-          # Do the same for JCL
+          # Read and modify JCL
           j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
           j = j.replace("ASMPGM", "ASM2PGM")
           
@@ -62,16 +63,25 @@ jobs:
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/fix_asm.py"
 
-      - name: Verify source dataset content
+      - name: Delete old load modules
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "head -50 \"//'Z89674.SOURCE(ASM2PGM)'\""
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
+            echo 'Deleting old load modules...'
+            tso \"DELETE 'Z89674.LOADLIB(ASM2PGM)'\" 2>/dev/null || echo 'LOADLIB member did not exist'
+            tso \"DELETE 'Z89674.OBJLIB(ASM2PGM)'\" 2>/dev/null || echo 'OBJLIB member did not exist'
+            tso \"DELETE 'Z89674.LOADLIB(ASMPGM)'\" 2>/dev/null || echo 'Old ASMPGM load did not exist'
+          "
+
+      - name: Verify JCL dataset content
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat \"//'Z89674.JCL(ASM2PGM)'\""
 
       - name: Submit compilation job
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'Z89674.JCL(ASM2PGM)'"
 
       - name: Wait for assembler to finish
-        run: sleep 30
+        run: sleep 45
 
       - name: Submit validation job
         run: |
