@@ -36,60 +36,74 @@ jobs:
           s = re.sub(r"L\s+7,=F'1'", "L 7,=F'0'", s)  # Initialize sum to 0
           s = re.sub(r"A\s+7,=F'1'", "A 7,=F'5'", s)  # Add 5 each loop
           
-          # Write to USS file (truncate to 80 chars to prevent dataset write errors)
+          # Write to dataset with line truncation
           lines = s.split('\n')
-          with open('/z/z89674/ASM2PGM.txt', 'w') as f:
-              for line in lines:
-                  clean_line = line.rstrip()[:80]
-                  f.write(clean_line + '\n')
-          print("Source USS file created")
+          truncated = [line[:80] for line in lines]
+          s_final = '\n'.join(truncated)
+          
+          try:
+              datasets.write("Z89674.SOURCE(ASM2PGM)", s_final)
+              print("Source code written to dataset successfully")
+          except Exception as e:
+              print(f"Error writing source: {e}")
+              # Fallback: write to USS file
+              with open('/z/z89674/ASM2PGM.txt', 'w') as f:
+                  f.write(s_final)
+              print("Source written to USS file as fallback")
           
           # Do the same for JCL
           j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
           j = j.replace("ASMPGM", "ASM2PGM")
           
           lines = j.split('\n')
-          with open('/z/z89674/ASM2JCL.txt', 'w') as f:
-              for line in lines:
-                  clean_line = line.rstrip()[:80]
-                  f.write(clean_line + '\n')
-          print("JCL USS file created")
+          truncated = [line[:80] for line in lines]
+          j_final = '\n'.join(truncated)
+          
+          try:
+              datasets.write("Z89674.JCL(ASM2PGM)", j_final)
+              print("JCL written to dataset successfully")
+          except Exception as e:
+              print(f"Error writing JCL: {e}")
+              # Fallback: write to USS file
+              with open('/z/z89674/ASM2JCL.txt', 'w') as f:
+                  f.write(j_final)
+              print("JCL written to USS file as fallback")
           PYEOF
 
-      - name: Copy script, create datasets, and execute
+      - name: Copy script to remote and execute
         run: |
           # 1. Copy Python script to remote
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no fix_asm.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/fix_asm.py
           
-          # 2. Run Python script to create USS files
+          # 2. Run Python script
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/fix_asm.py"
           
-          # 3. Delete old dataset members if they exist
+          # 3. If datasets.write failed, use cp to copy USS files to datasets
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            tso \"DELETE 'Z89674.SOURCE(ASM2PGM)'\" 2>/dev/null || echo 'Source member did not exist'
-            tso \"DELETE 'Z89674.JCL(ASM2PGM)'\" 2>/dev/null || echo 'JCL member did not exist'
+            if [ -f /z/z89674/ASM2PGM.txt ]; then
+              echo 'Copying source from USS file...'
+              tso \"DELETE 'Z89674.SOURCE(ASM2PGM)'\" 2>/dev/null || true
+              cp /z/z89674/ASM2PGM.txt '//Z89674.SOURCE(ASM2PGM)' 2>&1
+            fi
+            if [ -f /z/z89674/ASM2JCL.txt ]; then
+              echo 'Copying JCL from USS file...'
+              tso \"DELETE 'Z89674.JCL(ASM2PGM)'\" 2>/dev/null || true
+              cp /z/z89674/ASM2JCL.txt '//Z89674.JCL(ASM2PGM)' 2>&1
+            fi
           "
           
-          # 4. Copy USS files to datasets using TSO OPUT (the most reliable method on z/OS)
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            tso \"OPUT '/z/z89674/ASM2PGM.txt' 'Z89674.SOURCE(ASM2PGM)'\" 2>&1
-            echo 'Source OPUT exit code:' \$?
-            tso \"OPUT '/z/z89674/ASM2JCL.txt' 'Z89674.JCL(ASM2PGM)'\" 2>&1
-            echo 'JCL OPUT exit code:' \$?
-          "
-          
-          # 5. Verify the dataset content
+          # 4. Verify the dataset content
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
             echo '=== SOURCE DATASET CONTENT (first 30 lines) ==='
-            head -30 \"//'Z89674.SOURCE(ASM2PGM)'\"
+            head -30 \"//'Z89674.SOURCE(ASM2PGM)'\" 2>&1 || echo 'Could not read dataset'
           "
           
-          # 6. Submit Compilation Job
+          # 5. Submit Compilation Job
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'Z89674.JCL(ASM2PGM)'"
           
-          # 7. Wait for assembler
+          # 6. Wait for assembler
           sleep 30
           
-          # 8. Submit Validation Job
+          # 7. Submit Validation Job
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'ZXP.PUBLIC.JCL(CHKASM2)'"
           echo 'Validation job submitted!'
