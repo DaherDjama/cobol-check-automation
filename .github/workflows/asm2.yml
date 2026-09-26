@@ -1,4 +1,3 @@
-
 name: ASM2 Challenge Automation
 
 on:
@@ -17,40 +16,48 @@ jobs:
           import re
           from zoautil_py import datasets
           
-          # Read and modify source code
+          # Read the SOURCE code
           s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
           
-          # Replace register 2 with 6
+          # Apply register replacements to SOURCE
           s = s.replace(' 2,', ' 6,')
           s = s.replace(',2,', ',6,')
           s = s.replace(',2 ', ',6 ')
-          
-          # Replace register 3 with 7
           s = s.replace(' 3,', ' 7,')
           s = s.replace(',3,', ',7,')
           s = s.replace(',3 ', ',7 ')
-          
-          # Fix specific values
           s = s.replace("=F'4'", "=F'10'")
           s = re.sub(r"L\s+7,=F'1'", "L 7,=F'0'", s)
           s = re.sub(r"A\s+7,=F'1'", "A 7,=F'5'", s)
           
-          # Write to dataset with line truncation
+          # Write modified SOURCE to dataset
           lines = s.split('\n')
           truncated = [line[:80] for line in lines]
           s_final = '\n'.join(truncated)
-          
           datasets.write("Z89674.SOURCE(ASM2PGM)", s_final)
           print("Source code written to dataset successfully")
           
-          # Read and modify JCL
+          # Read the JCL (which contains inline source code)
           j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
+          
+          # Replace member name references
           j = j.replace("ASMPGM", "ASM2PGM")
           
+          # ALSO apply register replacements to the inline source code within JCL
+          j = j.replace(' 2,', ' 6,')
+          j = j.replace(',2,', ',6,')
+          j = j.replace(',2 ', ',6 ')
+          j = j.replace(' 3,', ' 7,')
+          j = j.replace(',3,', ',7,')
+          j = j.replace(',3 ', ',7 ')
+          j = j.replace("=F'4'", "=F'10'")
+          j = re.sub(r"L\s+7,=F'1'", "L 7,=F'0'", j)
+          j = re.sub(r"A\s+7,=F'1'", "A 7,=F'5'", j)
+          
+          # Write modified JCL to dataset
           lines = j.split('\n')
           truncated = [line[:80] for line in lines]
           j_final = '\n'.join(truncated)
-          
           datasets.write("Z89674.JCL(ASM2PGM)", j_final)
           print("JCL written to dataset successfully")
           PYEOF
@@ -69,7 +76,6 @@ jobs:
             echo 'Deleting old load modules...'
             tso \"DELETE 'Z89674.LOADLIB(ASM2PGM)'\" 2>/dev/null || echo 'LOADLIB member did not exist'
             tso \"DELETE 'Z89674.OBJLIB(ASM2PGM)'\" 2>/dev/null || echo 'OBJLIB member did not exist'
-            tso \"DELETE 'Z89674.LOADLIB(ASMPGM)'\" 2>/dev/null || echo 'Old ASMPGM load did not exist'
           "
 
       - name: Verify JCL dataset content
