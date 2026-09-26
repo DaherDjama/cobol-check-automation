@@ -29,51 +29,31 @@ jobs:
           s = s.replace("L 7,=F'1'", "L 7,=F'0'") # Initialize sum to 0
           s = s.replace("A 7,=F'1'", "A 7,=F'5'") # Add 5
           
-          # Write to USS text file (truncating lines to 80 chars)
-          with open('/z/z89674/ASM2PGM.txt', 'w') as f:
-              for line in s.split('\n'):
-                  f.write(line[:80] + '\n')
-          print("Source USS file created")
+          # Write to dataset with line truncation
+          lines = s.split('\n')
+          truncated = [line[:80] for line in lines]
+          s_final = '\n'.join(truncated)
+          
+          datasets.write("Z89674.SOURCE(ASM2PGM)", s_final)
+          print("Source code written to dataset")
           
           # --- PART 2: Modify JCL ---
           j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
           j = j.replace("ASMPGM", "ASM2PGM")
           
-          # Write to USS text file
-          with open('/z/z89674/ASM2JCL.txt', 'w') as f:
-              for line in j.split('\n'):
-                  f.write(line[:80] + '\n')
-          print("JCL USS file created")
+          lines = j.split('\n')
+          truncated = [line[:80] for line in lines]
+          j_final = '\n'.join(truncated)
+          
+          datasets.write("Z89674.JCL(ASM2PGM)", j_final)
+          print("JCL written to dataset")
           PYEOF
 
-      - name: Copy script, prepare datasets, and execute
+      - name: Copy script to remote and execute
         run: |
-          # 1. Copy Python script to remote
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no fix_asm.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/fix_asm.py
-          
-          # 2. Run Python script to create USS files
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/fix_asm.py"
-          
-          # 3. Create/Ensure datasets exist with correct attributes (LRECL=80)
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            tso \"ALLOCATE DATASET('Z89674.SOURCE') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS\" 2>/dev/null || echo 'SOURCE dataset ready'
-            tso \"ALLOCATE DATASET('Z89674.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS\" 2>/dev/null || echo 'JCL dataset ready'
-          "
-          
-          # 4. Copy USS files to Datasets using cp (handles text-to-record conversion)
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            cp -F recfm=fb,lrecl=80 /z/z89674/ASM2PGM.txt '//Z89674.SOURCE(ASM2PGM)'
-            echo 'Source copied to dataset'
-            cp -F recfm=fb,lrecl=80 /z/z89674/ASM2JCL.txt '//Z89674.JCL(ASM2PGM)'
-            echo 'JCL copied to dataset'
-          "
-          
-          # 5. Submit Compilation Job
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'Z89674.JCL(ASM2PGM)'"
-          
-          # 6. Wait for assembler
           sleep 30
-          
-          # 7. Submit Validation Job
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'ZXP.PUBLIC.JCL(CHKASM2)'"
           echo 'Validation job submitted!'
