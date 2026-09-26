@@ -19,37 +19,28 @@ jobs:
           # Read the source code
           s = datasets.read("ZXP.PUBLIC.SOURCE(ASMPGM)")
           
-          # Replace register 2 with 6 (handling various spacings)
+          # Replace register 2 with 6
           s = s.replace(' 2,', ' 6,')
           s = s.replace(',2,', ',6,')
           s = s.replace(',2 ', ',6 ')
           
-          # Replace register 3 with 7 (handling various spacings)
+          # Replace register 3 with 7
           s = s.replace(' 3,', ' 7,')
           s = s.replace(',3,', ',7,')
           s = s.replace(',3 ', ',7 ')
           
           # Fix specific values
-          s = s.replace("=F'4'", "=F'10'")  # Loop count: 4 -> 10
-          
-          # Use regex to handle variable spacing (e.g., "L  7,=F'1'")
-          s = re.sub(r"L\s+7,=F'1'", "L 7,=F'0'", s)  # Initialize sum to 0
-          s = re.sub(r"A\s+7,=F'1'", "A 7,=F'5'", s)  # Add 5 each loop
+          s = s.replace("=F'4'", "=F'10'")
+          s = re.sub(r"L\s+7,=F'1'", "L 7,=F'0'", s)
+          s = re.sub(r"A\s+7,=F'1'", "A 7,=F'5'", s)
           
           # Write to dataset with line truncation
           lines = s.split('\n')
           truncated = [line[:80] for line in lines]
           s_final = '\n'.join(truncated)
           
-          try:
-              datasets.write("Z89674.SOURCE(ASM2PGM)", s_final)
-              print("Source code written to dataset successfully")
-          except Exception as e:
-              print(f"Error writing source: {e}")
-              # Fallback: write to USS file
-              with open('/z/z89674/ASM2PGM.txt', 'w') as f:
-                  f.write(s_final)
-              print("Source written to USS file as fallback")
+          datasets.write("Z89674.SOURCE(ASM2PGM)", s_final)
+          print("Source code written to dataset successfully")
           
           # Do the same for JCL
           j = datasets.read("ZXP.PUBLIC.JCL(ASMPGM)")
@@ -59,51 +50,30 @@ jobs:
           truncated = [line[:80] for line in lines]
           j_final = '\n'.join(truncated)
           
-          try:
-              datasets.write("Z89674.JCL(ASM2PGM)", j_final)
-              print("JCL written to dataset successfully")
-          except Exception as e:
-              print(f"Error writing JCL: {e}")
-              # Fallback: write to USS file
-              with open('/z/z89674/ASM2JCL.txt', 'w') as f:
-                  f.write(j_final)
-              print("JCL written to USS file as fallback")
+          datasets.write("Z89674.JCL(ASM2PGM)", j_final)
+          print("JCL written to dataset successfully")
           PYEOF
 
-      - name: Copy script to remote and execute
+      - name: Copy Python script to remote
         run: |
-          # 1. Copy Python script to remote
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no fix_asm.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/fix_asm.py
-          
-          # 2. Run Python script
+
+      - name: Run Python script to modify code
+        run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/fix_asm.py"
-          
-          # 3. If datasets.write failed, use cp to copy USS files to datasets
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            if [ -f /z/z89674/ASM2PGM.txt ]; then
-              echo 'Copying source from USS file...'
-              tso \"DELETE 'Z89674.SOURCE(ASM2PGM)'\" 2>/dev/null || true
-              cp /z/z89674/ASM2PGM.txt '//Z89674.SOURCE(ASM2PGM)' 2>&1
-            fi
-            if [ -f /z/z89674/ASM2JCL.txt ]; then
-              echo 'Copying JCL from USS file...'
-              tso \"DELETE 'Z89674.JCL(ASM2PGM)'\" 2>/dev/null || true
-              cp /z/z89674/ASM2JCL.txt '//Z89674.JCL(ASM2PGM)' 2>&1
-            fi
-          "
-          
-          # 4. Verify the dataset content
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "
-            echo '=== SOURCE DATASET CONTENT (first 30 lines) ==='
-            head -30 \"//'Z89674.SOURCE(ASM2PGM)'\" 2>&1 || echo 'Could not read dataset'
-          "
-          
-          # 5. Submit Compilation Job
+
+      - name: Verify source dataset content
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "head -50 \"//'Z89674.SOURCE(ASM2PGM)'\""
+
+      - name: Submit compilation job
+        run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'Z89674.JCL(ASM2PGM)'"
-          
-          # 6. Wait for assembler
-          sleep 30
-          
-          # 7. Submit Validation Job
+
+      - name: Wait for assembler to finish
+        run: sleep 30
+
+      - name: Submit validation job
+        run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "submit //'ZXP.PUBLIC.JCL(CHKASM2)'"
           echo 'Validation job submitted!'
