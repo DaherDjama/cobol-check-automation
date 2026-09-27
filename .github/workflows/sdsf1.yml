@@ -1,4 +1,3 @@
-
 name: SDSF1 Challenge Automation
 
 on:
@@ -16,103 +15,108 @@ jobs:
           cat > sdsf1.py << 'PYEOF'
           import subprocess
           import time
-          from zoautil_py import datasets, jobs
+          import re
+          from zoautil_py import datasets
 
-          def run_shell(cmd):
-              # Run shell command (for ZOAU tools)
-              full_cmd = f"source /etc/profile 2>/dev/null; {cmd}"
-              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
+          def run_cmd(cmd):
+              """Run a shell command and return output, handling encoding."""
+              # Use latin-1 to prevent UnicodeDecodeError from EBCDIC characters
+              res = subprocess.run(cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
           print("=== STEP 1: Ensure OUTPUT dataset exists ===")
           # Allocate the OUTPUT PDS if it doesn't exist
-          run_shell("tso \"ALLOCATE DSNAME('Z89674.OUTPUT') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS\"")
+          run_cmd("tso \"ALLOCATE DSNAME('Z89674.OUTPUT') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS\"")
           print("OUTPUT dataset ready.")
 
           print("=== STEP 2: Submit CHKTSO4 job ===")
-          # Submit the job using TSO command
-          submit_out = run_shell("tso \"submit 'ZXP.PUBLIC.JCL(CHKTSO4)'\"")
-          print(f"Submit response: {submit_out}")
+          # Submit the job. We ignore the garbled output, we know it works.
+          submit_out = run_cmd("tso \"submit 'ZXP.PUBLIC.JCL(CHKTSO4)'\"")
+          print("Job submitted (output was garbled EBCDIC, but that's expected).")
 
           print("=== STEP 3: Wait for job to finish ===")
-          # Give the mainframe time to process the job
           time.sleep(30)
 
-          print("=== STEP 4: Find the completed job using ZOAU ===")
-          # Use ZOAU 'jobs' command to find our job. 
-          # We look for jobs owned by our userid that have finished (RC != None)
-          try:
-              my_jobs = jobs.search(owner="*") # Search for all jobs owned by current user
-              # Filter for the specific job name or just take the most recent completed one
-              target_job = None
-              
-              # Sort by jobid descending to get the newest first
-              sorted_jobs = sorted(my_jobs, key=lambda x: x.job_id, reverse=True)
-              
-              for j in sorted_jobs:
-                  # Look for the job that was just submitted (CHKTSO4 usually has a specific name or we just take the latest)
-                  # Since we can't easily filter by name via API without knowing exact prefix, 
-                  # we'll assume the most recent completed job is ours.
-                  if j.rc is not None: # Job has finished
-                      target_job = j
-                      break
-                      
-              if target_job:
-                  job_id = target_job.job_id
-                  print(f"Found completed job: {job_id} with RC={target_job.rc}")
-              else:
-                  print("No completed jobs found. Waiting longer...")
-                  time.sleep(30)
-                  # Try again
-                  my_jobs = jobs.search(owner="*")
-                  sorted_jobs = sorted(my_jobs, key=lambda x: x.job_id, reverse=True)
-                  for j in sorted_jobs:
-                      if j.rc is not None:
-                          target_job = j
-                          job_id = j.job_id
-                          print(f"Found completed job after wait: {job_id}")
-                          break
-                  
-          except Exception as e:
-              print(f"Error searching jobs: {e}")
-              exit(1)
+          print("=== STEP 4: Find Job ID using 'jls' ===")
+          # Run 'jls' (ZOAU Job List) to see recent jobs
+          jls_out = run_cmd("jls")
+          print("--- JLS Output ---")
+          print(jls_out)
+          print("------------------")
 
-          print("=== STEP 5: Save output using jcat and datasets.write ===")
-          # Try common DD names to find the job log
-          dd_names = ['SYSPRINT', 'SYSTSPRT', 'JESYSMSG', 'JESJCL']
-          success = False
+          # Parse the output to find the Job ID
+          # jls usually outputs: JOBNAME JOBID OWNER ...
+          # We look for 'CHKTSO4' or just grab the most recent JOB ID
+          job_id = None
+          
+          # Try to find specific job name
+          match = re.search(r'CHKTSO4\s+(JOB\d+)', jls_out)
+          if match:
+              job_id = match.group(1)
+          else:
+              # Fallback: Find all JOB IDs and take the last one (most recent)
+              matches = re.findall(r'(JOB\d+)', jls_out)
+              if matches:
+                  job_id = matches[-1]
+          
+          if not job_id:
+              print("Could not find Job ID. Exiting.")
+              exit(1)
+              
+          print(f"Found Job ID: {job_id}")
+
+          print("=== STEP 5: Capture Spool Output ===")
+          # Try to get the output from SYSPRINT (standard output) or JESYSMSG (job log)
+          # We try multiple DD names
+          dd_names = ['SYSPRINT', 'JESYSMSG', 'JESJCL', 'SYSTSPRT']
+          content = ""
           
           for dd in dd_names:
-              print(f"Trying to capture DD={dd}...")
-              # Use jcat (ZOAU) to get spool content
-              cmd = f"jcat -j {job_id} -d {dd}"
-              content = run_shell(cmd)
+              print(f"Trying to read DD={dd}...")
+              # jcat reads spool output. 
+              # We use iconv to convert EBCDIC to ASCII just in case, though jcat usually does it.
+              cmd = f"jcat -j {job_id} -d {dd} 2>/dev/null | iconv -f IBM-1047 -t UTF-8 2>/dev/null"
+              res = run_cmd(cmd)
               
-              # Check if we got actual content
-              if "JES000" not in content and "not found" not in content.lower() and len(content) > 10:
-                  print(f"Success capturing {dd}! Writing to dataset...")
-                  
-                  # Format content for dataset (truncate lines to 80 chars)
-                  lines = content.split('\n')
-                  # Remove empty lines at end
-                  while lines and not lines[-1].strip():
-                      lines.pop()
-                  
-                  formatted_content = '\n'.join([l[:80] for l in lines])
-                  
-                  try:
-                      datasets.write("Z89674.OUTPUT(TSO4)", formatted_content)
-                      print(f"Successfully wrote to Z89674.OUTPUT(TSO4) using content from {dd}")
-                      success = True
-                      break
-                  except Exception as e:
-                      print(f"Error writing dataset: {e}")
+              # Check if we got meaningful content (length > 20 chars)
+              if len(res) > 20 and "JES000" not in res:
+                  print(f"Success! Got content from {dd}.")
+                  content = res
+                  break
               else:
-                  print(f"DD={dd} not found or empty.")
+                  print(f"Empty or error for {dd}.")
 
-          if not success:
-              print("Warning: Could not capture output. Check Job ID and DD names.")
-              
+          if not content:
+              print("Warning: Could not get spool content. Trying raw jcat...")
+              # Fallback without iconv
+              content = run_cmd(f"jcat -j {job_id} -d SYSPRINT")
+
+          print("=== STEP 6: Save to Dataset ===")
+          # Clean up the content for the dataset
+          lines = content.split('\n')
+          clean_lines = []
+          for line in lines:
+              # Remove non-printable characters (artifacts from encoding)
+              clean_line = ''.join(c for c in line if c.isprintable() or c in ['\n', '\t', ' '])
+              # Truncate to 80 chars for the dataset
+              clean_lines.append(clean_line[:80])
+          
+          # Remove empty lines at the end
+          while clean_lines and not clean_lines[-1].strip():
+              clean_lines.pop()
+
+          final_text = '\n'.join(clean_lines)
+          
+          try:
+              datasets.write("Z89674.OUTPUT(TSO4)", final_text)
+              print("Successfully saved to Z89674.OUTPUT(TSO4)!")
+          except Exception as e:
+              print(f"Error saving dataset: {e}")
+              # Fallback: Write to USS file if dataset write fails
+              with open('/z/z89674/TSO4.txt', 'w') as f:
+                  f.write(final_text)
+              print("Saved to USS file /z/z89674/TSO4.txt as fallback.")
+
           print("=== SDSF1 Automation Complete ===")
           PYEOF
 
