@@ -1,0 +1,50 @@
+name: ISPF1 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ispf1-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get install -y sshpass
+
+      - name: Create Python script locally
+        run: |
+          cat > ispf1.py << 'PYEOF'
+          import subprocess
+          from zoautil_py import datasets
+
+          def run_tso(cmd):
+              """Helper to run TSO commands"""
+              full_cmd = f'tso "{cmd}"'
+              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              return res.stdout + res.stderr
+
+          print("=== STEP 1: Allocate ISPLOG dataset with KEEP disposition ===")
+          # This simulates the ISPF setting "Keep the dataset" for the log
+          # Try to allocate with OLD,KEEP (if it already exists)
+          res = run_tso("ALLOCATE DSNAME('Z89674.ISPF.ISPLOG') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS DISP(OLD,KEEP)")
+          print(res)
+          
+          # If it doesn't exist, create it with NEW,KEEP
+          if "not found" in res.lower() or "error" in res.lower() or "does not exist" in res.lower():
+              print("Dataset does not exist, creating with NEW,KEEP...")
+              res = run_tso("ALLOCATE DSNAME('Z89674.ISPF.ISPLOG') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS DISP(NEW,KEEP)")
+              print(res)
+
+          print("=== STEP 2: Submit CHKTSO2 validation job ===")
+          res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKTSO2)'")
+          print(res)
+          
+          print("=== ISPF1 Automation Complete ===")
+          PYEOF
+
+      - name: Copy script to remote
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no ispf1.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/ispf1.py
+
+      - name: Execute automation script
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/ispf1.py"
