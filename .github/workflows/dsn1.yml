@@ -17,17 +17,17 @@ jobs:
           from zoautil_py import datasets
 
           def run_tso(cmd):
-              """Helper to run TSO commands with EBCDIC handling"""
+              """Helper to run TSO commands"""
               full_cmd = f'tso "{cmd}"'
               res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
-          USER = "Z89674" # Your specific User ID based on previous challenges
+          USER = "Z89674"
 
           print("=== STEP 1: Allocate Z89674.JCL.NEW ===")
-          # Delete if it exists to ensure a clean slate
+          # Delete if it exists first
           run_tso(f"DELETE '{USER}.JCL.NEW'")
-          # Allocate the new Partitioned Dataset (PO)
+          # Allocate the new Partitioned Dataset
           res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL.NEW') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
           print(res)
 
@@ -37,16 +37,18 @@ jobs:
               members = datasets.list_members(f"{USER}.INPUT")
               print(f"Found members to copy: {members}")
               
-              # Copy each member individually
+              # Copy each member using TSO COPY command instead of datasets.copy()
               for m in members:
                   print(f"Copying {m}...")
-                  datasets.copy(f"{USER}.INPUT({m})", f"{USER}.JCL.NEW({m})")
+                  # Use TSO COPY command: COPY 'source(member)' 'target(member)'
+                  cmd = f"COPY '{USER}.INPUT({m})' '{USER}.JCL.NEW({m})'"
+                  res = run_tso(cmd)
+                  print(f"  Result: {res.strip()}")
               print("Copy operation complete.")
           except Exception as e:
-              print(f"Error during copy: {e}. (Make sure Z89674.INPUT exists)")
+              print(f"Error during copy: {e}")
 
           print("=== STEP 3: Delete specific datasets ===")
-          # The PDF asks to delete SEQDS, KEYS, and SURPRISE
           to_delete = [f"{USER}.SEQDS", f"{USER}.KEYS", f"{USER}.SURPRISE"]
           for ds in to_delete:
               print(f"Attempting to delete {ds}...")
