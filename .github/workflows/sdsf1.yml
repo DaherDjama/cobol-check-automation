@@ -16,16 +16,19 @@ jobs:
           import subprocess
           import time
           import re
+          from zoautil_py import datasets
+
+          def run_shell(cmd):
+              # Run command in shell (for ZOAU tools like jcat)
+              # Use latin-1 encoding to prevent UnicodeDecodeError with EBCDIC data
+              full_cmd = f"source /etc/profile 2>/dev/null; {cmd}"
+              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              return res.stdout + res.stderr
 
           def run_tso(cmd):
-              """Helper to run TSO commands"""
-              # Ensure command is wrapped in tso "..."
-              if not cmd.startswith('tso'):
-                  full_cmd = f'tso "{cmd}"'
-              else:
-                  full_cmd = cmd
-              
-              res = subprocess.run(full_cmd, shell=True, capture_output=True, text=True)
+              # Run TSO command
+              full_cmd = f"source /etc/profile 2>/dev/null; tso \"{cmd}\""
+              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
           print("=== STEP 1: Ensure OUTPUT dataset exists ===")
@@ -40,7 +43,7 @@ jobs:
           print("=== STEP 3: Extract Job ID ===")
           match = re.search(r'(JOB\d+)', output)
           if not match:
-              print("Failed to find Job ID in output.")
+              print("Failed to find Job ID.")
               exit(1)
           
           job_id = match.group(1)
@@ -49,29 +52,41 @@ jobs:
           print("=== STEP 4: Wait for job to finish ===")
           time.sleep(30)
 
-          print("=== STEP 5: Save output using OPRINT ===")
-          # The challenge asks to save to OUTPUT(TSO4).
-          # We try common DD names: SYSPRINT, SYSTSPRT, JESYSMSG
+          print("=== STEP 5: Save output using jcat and datasets.write ===")
+          # Try common DD names to find the job log
           dd_names = ['SYSPRINT', 'SYSTSPRT', 'JESYSMSG', 'JESJCL']
           success = False
           
           for dd in dd_names:
-              print(f"Trying to save DD={dd}...")
-              # OPRINT syntax: OPRINT JOB(jobid) DD(ddname) DSN('dataset(member)')
-              cmd = f"OPRINT JOB({job_id}) DD({dd}) DSN('Z89674.OUTPUT(TSO4)')"
-              res = run_tso(cmd)
-              print(res)
+              print(f"Trying to capture DD={dd}...")
+              # Use jcat (ZOAU) to get spool content
+              cmd = f"jcat -j {job_id} -d {dd}"
+              content = run_shell(cmd)
               
-              # Check for success (OPRINT usually returns RC 0 or specific messages)
-              if "error" not in res.lower() and "failed" not in res.lower() and "not found" not in res.lower():
-                  print(f"Success with DD={dd}!")
-                  success = True
-                  break
+              # Check if we got actual content (not just "not found" or empty)
+              if "JES000" not in content and "not found" not in content.lower() and len(content) > 10:
+                  print(f"Success capturing {dd}! Writing to dataset...")
+                  
+                  # Format content for dataset (truncate lines to 80 chars)
+                  lines = content.split('\n')
+                  # Remove empty lines at end
+                  while lines and not lines[-1].strip():
+                      lines.pop()
+                  
+                  formatted_content = '\n'.join([l[:80] for l in lines])
+                  
+                  try:
+                      datasets.write("Z89674.OUTPUT(TSO4)", formatted_content)
+                      print(f"Successfully wrote to Z89674.OUTPUT(TSO4) using content from {dd}")
+                      success = True
+                      break
+                  except Exception as e:
+                      print(f"Error writing dataset: {e}")
               else:
-                  print(f"Failed with DD={dd}, trying next...")
+                  print(f"DD={dd} not found or empty.")
 
           if not success:
-              print("Warning: OPRINT might have failed for all DD names. Check logs.")
+              print("Warning: Could not capture output. Check Job ID and DD names.")
               
           print("=== SDSF1 Automation Complete ===")
           PYEOF
@@ -82,5 +97,4 @@ jobs:
 
       - name: Execute automation script
         run: |
-          # Source profile to ensure 'tso' and 'python3' are in PATH, then run script
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/sdsf1.py"
