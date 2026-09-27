@@ -1,0 +1,72 @@
+name: DSN1 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dsn1-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get install -y sshpass
+
+      - name: Create Python script locally
+        run: |
+          cat > dsn1.py << 'PYEOF'
+          import subprocess
+          from zoautil_py import datasets
+
+          def run_tso(cmd):
+              """Helper to run TSO commands with EBCDIC handling"""
+              full_cmd = f'tso "{cmd}"'
+              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              return res.stdout + res.stderr
+
+          USER = "Z89674" # Your specific User ID based on previous challenges
+
+          print("=== STEP 1: Allocate Z89674.JCL.NEW ===")
+          # Delete if it exists to ensure a clean slate
+          run_tso(f"DELETE '{USER}.JCL.NEW'")
+          # Allocate the new Partitioned Dataset (PO)
+          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL.NEW') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print(res)
+
+          print("=== STEP 2: Copy members from INPUT to JCL.NEW ===")
+          try:
+              # List all members in the INPUT dataset
+              members = datasets.list_members(f"{USER}.INPUT")
+              print(f"Found members to copy: {members}")
+              
+              # Copy each member individually
+              for m in members:
+                  print(f"Copying {m}...")
+                  datasets.copy(f"{USER}.INPUT({m})", f"{USER}.JCL.NEW({m})")
+              print("Copy operation complete.")
+          except Exception as e:
+              print(f"Error during copy: {e}. (Make sure Z89674.INPUT exists)")
+
+          print("=== STEP 3: Delete specific datasets ===")
+          # The PDF asks to delete SEQDS, KEYS, and SURPRISE
+          to_delete = [f"{USER}.SEQDS", f"{USER}.KEYS", f"{USER}.SURPRISE"]
+          for ds in to_delete:
+              print(f"Attempting to delete {ds}...")
+              try:
+                  datasets.delete(ds)
+                  print(f"Successfully deleted {ds}")
+              except Exception as e:
+                  print(f"Could not delete {ds} (it might not exist): {e}")
+
+          print("=== STEP 4: Submit Validation Job (CHKTSO3) ===")
+          res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKTSO3)'")
+          print(res)
+          
+          print("=== DSN1 Automation Complete ===")
+          PYEOF
+
+      - name: Copy script to remote
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no dsn1.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/dsn1.py
+
+      - name: Execute automation script
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/dsn1.py"
