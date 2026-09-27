@@ -1,3 +1,4 @@
+
 name: SDSF1 Challenge Automation
 
 on:
@@ -15,42 +16,66 @@ jobs:
           cat > sdsf1.py << 'PYEOF'
           import subprocess
           import time
-          import re
-          from zoautil_py import datasets
+          from zoautil_py import datasets, jobs
 
           def run_shell(cmd):
-              # Run command in shell (for ZOAU tools like jcat)
-              # Use latin-1 encoding to prevent UnicodeDecodeError with EBCDIC data
+              # Run shell command (for ZOAU tools)
               full_cmd = f"source /etc/profile 2>/dev/null; {cmd}"
               res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
-          def run_tso(cmd):
-              # Run TSO command
-              full_cmd = f"source /etc/profile 2>/dev/null; tso \"{cmd}\""
-              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
-              return res.stdout + res.stderr
-
           print("=== STEP 1: Ensure OUTPUT dataset exists ===")
-          # Allocate the OUTPUT PDS if it doesn't exist. Ignore errors if it does.
-          run_tso("ALLOCATE DSNAME('Z89674.OUTPUT') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          # Allocate the OUTPUT PDS if it doesn't exist
+          run_shell("tso \"ALLOCATE DSNAME('Z89674.OUTPUT') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS\"")
           print("OUTPUT dataset ready.")
 
           print("=== STEP 2: Submit CHKTSO4 job ===")
-          output = run_tso("submit 'ZXP.PUBLIC.JCL(CHKTSO4)'")
-          print(output)
+          # Submit the job using TSO command
+          submit_out = run_shell("tso \"submit 'ZXP.PUBLIC.JCL(CHKTSO4)'\"")
+          print(f"Submit response: {submit_out}")
 
-          print("=== STEP 3: Extract Job ID ===")
-          match = re.search(r'(JOB\d+)', output)
-          if not match:
-              print("Failed to find Job ID.")
-              exit(1)
-          
-          job_id = match.group(1)
-          print(f"Captured Job ID: {job_id}")
-
-          print("=== STEP 4: Wait for job to finish ===")
+          print("=== STEP 3: Wait for job to finish ===")
+          # Give the mainframe time to process the job
           time.sleep(30)
+
+          print("=== STEP 4: Find the completed job using ZOAU ===")
+          # Use ZOAU 'jobs' command to find our job. 
+          # We look for jobs owned by our userid that have finished (RC != None)
+          try:
+              my_jobs = jobs.search(owner="*") # Search for all jobs owned by current user
+              # Filter for the specific job name or just take the most recent completed one
+              target_job = None
+              
+              # Sort by jobid descending to get the newest first
+              sorted_jobs = sorted(my_jobs, key=lambda x: x.job_id, reverse=True)
+              
+              for j in sorted_jobs:
+                  # Look for the job that was just submitted (CHKTSO4 usually has a specific name or we just take the latest)
+                  # Since we can't easily filter by name via API without knowing exact prefix, 
+                  # we'll assume the most recent completed job is ours.
+                  if j.rc is not None: # Job has finished
+                      target_job = j
+                      break
+                      
+              if target_job:
+                  job_id = target_job.job_id
+                  print(f"Found completed job: {job_id} with RC={target_job.rc}")
+              else:
+                  print("No completed jobs found. Waiting longer...")
+                  time.sleep(30)
+                  # Try again
+                  my_jobs = jobs.search(owner="*")
+                  sorted_jobs = sorted(my_jobs, key=lambda x: x.job_id, reverse=True)
+                  for j in sorted_jobs:
+                      if j.rc is not None:
+                          target_job = j
+                          job_id = j.job_id
+                          print(f"Found completed job after wait: {job_id}")
+                          break
+                  
+          except Exception as e:
+              print(f"Error searching jobs: {e}")
+              exit(1)
 
           print("=== STEP 5: Save output using jcat and datasets.write ===")
           # Try common DD names to find the job log
@@ -63,7 +88,7 @@ jobs:
               cmd = f"jcat -j {job_id} -d {dd}"
               content = run_shell(cmd)
               
-              # Check if we got actual content (not just "not found" or empty)
+              # Check if we got actual content
               if "JES000" not in content and "not found" not in content.lower() and len(content) > 10:
                   print(f"Success capturing {dd}! Writing to dataset...")
                   
