@@ -15,6 +15,7 @@ jobs:
           cat > racf1.py << 'PYEOF'
           import subprocess
           import time
+          from zoautil_py import datasets
 
           def run_tso(cmd):
               """Helper to run TSO commands"""
@@ -31,8 +32,12 @@ jobs:
           res = run_tso(f"ALLOCATE DSNAME('{USER}.magic') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
           print(res)
 
-          print("=== STEP 2: Create RACF JCL file (ensuring column 1 alignment) ===")
-          # Use a list of strings to avoid indentation issues in the final JCL
+          print("=== STEP 2: Ensure JCL dataset exists ===")
+          # Make sure Z89674.JCL exists as a PDS
+          run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+
+          print("=== STEP 3: Write RACF JCL to dataset using datasets.write() ===")
+          # Create JCL content with proper formatting
           jcl_lines = [
               f"//RACFJOB  JOB 1,NOTIFY=&SYSUID",
               f"//STEP1    EXEC PGM=IKJEFT01",
@@ -43,17 +48,13 @@ jobs:
               f"  LISTDSD DA('{USER}.magic') ALL",
               f"/*"
           ]
-          jcl_content = "\n".join(jcl_lines) + "\n"
+          jcl_content = "\n".join(jcl_lines)
 
-          # Write to USS file
-          with open('/z/z89674/RACFJOB.jcl', 'w') as f:
-              f.write(jcl_content)
-          print("JCL written to USS file successfully")
-
-          print("=== STEP 3: Copy JCL to dataset using OPUT ===")
-          run_tso(f"DELETE '{USER}.JCL(RACFJOB)'")
-          res = run_tso(f"OPUT '/z/z89674/RACFJOB.jcl' '{USER}.JCL(RACFJOB)'")
-          print(res)
+          try:
+              datasets.write(f"{USER}.JCL(RACFJOB)", jcl_content)
+              print("RACF JCL written to dataset successfully")
+          except Exception as e:
+              print(f"Error writing JCL: {e}")
 
           print("=== STEP 4: Submit RACF batch job ===")
           res = run_tso(f"submit '{USER}.JCL(RACFJOB)'")
@@ -65,7 +66,7 @@ jobs:
           print("=== STEP 6: Submit Validation Job (CHKRACF1) ===")
           res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKRACF1)'")
           print(res)
-          
+
           print("=== RACF1 Automation Complete ===")
           PYEOF
 
