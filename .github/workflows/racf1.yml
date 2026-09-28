@@ -14,6 +14,7 @@ jobs:
         run: |
           cat > racf1.py << 'PYEOF'
           import subprocess
+          import time
 
           def run_tso(cmd):
               """Helper to run TSO commands"""
@@ -30,26 +31,38 @@ jobs:
           res = run_tso(f"ALLOCATE DSNAME('{USER}.magic') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
           print(res)
 
-          print("=== STEP 2: Add RACF dataset profile with UACC(NONE) ===")
-          # First, delete any existing profile
-          run_tso(f"DELDSD '{USER}.magic'")
-          
-          # ADDSD command to create RACF profile for the dataset
-          # Since the dataset exists, we don't use GENERIC
-          res = run_tso(f"ADDSD '{USER}.magic' UACC(NONE)")
+          print("=== STEP 2: Create RACF JCL file (ensuring column 1 alignment) ===")
+          # Use a list of strings to avoid indentation issues in the final JCL
+          jcl_lines = [
+              f"//RACFJOB  JOB 1,NOTIFY=&SYSUID",
+              f"//STEP1    EXEC PGM=IKJEFT01",
+              f"//SYSTSPRT DD SYSOUT=*",
+              f"//SYSTSIN  DD *",
+              f"  ADDSD '{USER}.magic' UACC(NONE)",
+              f"  PERMIT '{USER}.magic' ID(IBM0001) ACCESS(UPDATE)",
+              f"  LISTDSD DA('{USER}.magic') ALL",
+              f"/*"
+          ]
+          jcl_content = "\n".join(jcl_lines) + "\n"
+
+          # Write to USS file
+          with open('/z/z89674/RACFJOB.jcl', 'w') as f:
+              f.write(jcl_content)
+          print("JCL written to USS file successfully")
+
+          print("=== STEP 3: Copy JCL to dataset using OPUT ===")
+          run_tso(f"DELETE '{USER}.JCL(RACFJOB)'")
+          res = run_tso(f"OPUT '/z/z89674/RACFJOB.jcl' '{USER}.JCL(RACFJOB)'")
           print(res)
 
-          print("=== STEP 3: Permit IBM0001 UPDATE access ===")
-          # PERMIT command to give IBM0001 write (UPDATE) access
-          res = run_tso(f"PERMIT '{USER}.magic' ID(IBM0001) ACCESS(UPDATE)")
+          print("=== STEP 4: Submit RACF batch job ===")
+          res = run_tso(f"submit '{USER}.JCL(RACFJOB)'")
           print(res)
 
-          print("=== STEP 4: Verify the permissions ===")
-          # List the dataset permissions to verify
-          res = run_tso(f"LISTDSD DA('{USER}.magic') ALL")
-          print(res)
+          print("=== STEP 5: Wait for RACF job to finish ===")
+          time.sleep(30)
 
-          print("=== STEP 5: Submit Validation Job (CHKRACF1) ===")
+          print("=== STEP 6: Submit Validation Job (CHKRACF1) ===")
           res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKRACF1)'")
           print(res)
           
