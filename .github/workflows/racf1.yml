@@ -15,7 +15,7 @@ jobs:
           cat > racf1.py << 'PYEOF'
           import subprocess
           import time
-          from zoautil_py import datasets
+          import codecs
 
           def run_tso(cmd):
               """Helper to run TSO commands"""
@@ -27,39 +27,29 @@ jobs:
           DATASET = f"{USER}.MAGIC"
 
           print("=== STEP 1: Create sequential dataset Z89674.MAGIC ===")
-          # Delete if exists first (ignore errors)
+          # Delete if exists first
           run_tso(f"DELETE '{DATASET}'")
           # Allocate the dataset (PS = Physical Sequential)
           res = run_tso(f"ALLOCATE DSNAME('{DATASET}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
           print(f"Allocate result: {res.strip()}")
 
-          print("=== STEP 2: Write RACF JCL to dataset ===")
-          # Use the exact JOB card format from the successful ASM2 challenge
-          # Note: CLASS=7 is likely required for this system
-          jcl_lines = [
-              "//RACFJOB  JOB ,NOTIFY=&SYSUID,CLASS=7",
-              "//STEP1    EXEC PGM=IKJEFT01",
-              "//SYSTSPRT DD SYSOUT=*",
-              "//SYSTSIN  DD *",
-              f"ADDSD '{DATASET}' UACC(NONE)",
-              f"PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)",
-              "/*"
-          ]
-          jcl_content = "\n".join(jcl_lines)
+          print("=== STEP 2: Write RACF JCL to USS file with EBCDIC encoding ===")
+          # Create JCL content
+          jcl_content = f"""//RACFJOB JOB ,NOTIFY=&SYSUID
+//STEP1 EXEC PGM=IKJEFT01
+//SYSTSPRT DD SYSOUT=*
+//SYSTSIN DD *
+ADDSD '{DATASET}' UACC(NONE)
+PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)
+/*
+"""
+          # Write to USS file with EBCDIC encoding (IBM-1047)
+          with codecs.open('/z/z89674/RACFJOB.jcl', 'w', encoding='IBM-1047') as f:
+              f.write(jcl_content)
+          print("JCL written to USS file with EBCDIC encoding")
 
-          try:
-              # Write to the JCL dataset
-              datasets.write(f"{USER}.JCL(RACFJOB)", jcl_content)
-              print("RACF JCL written to dataset successfully")
-          except Exception as e:
-              print(f"Error writing JCL: {e}")
-              # Fallback: Try to allocate JCL dataset first if it doesn't exist
-              run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-              datasets.write(f"{USER}.JCL(RACFJOB)", jcl_content)
-              print("RACF JCL written to dataset successfully (after allocating JCL PDS)")
-
-          print("=== STEP 3: Submit RACF batch job ===")
-          res = run_tso(f"submit '{USER}.JCL(RACFJOB)'")
+          print("=== STEP 3: Submit RACF batch job from USS file ===")
+          res = run_tso(f"submit '/z/z89674/RACFJOB.jcl'")
           print(f"Submit result: {res.strip()}")
 
           print("=== STEP 4: Wait for RACF job to finish ===")
