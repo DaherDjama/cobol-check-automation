@@ -1,3 +1,4 @@
+
 name: SMPE1 Challenge Automation
 
 on:
@@ -28,11 +29,11 @@ jobs:
           SRC = "ZXP.PUBLIC.JCL(GIMSAMPU)"
           DST = f"{USER}.JCL(GIMSAMPU)"
 
-          print("=== STEP 1: Ensure JCL dataset exists (LRECL=1024 for very long lines) ===")
+          print("=== STEP 1: Ensure JCL dataset exists (LRECL=32760 - maximum) ===")
           # Delete old dataset to start fresh
           run_tso(f"DELETE '{USER}.JCL'")
-          # Allocate with LRECL=1024 to handle extremely long lines from SMP/E JCL
-          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(1024) SPACE(1,1) TRACKS")
+          # Allocate with maximum LRECL to handle extremely long lines
+          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(32760) SPACE(1,1) TRACKS")
           print(f"Allocate result: {res.strip()}")
 
           print("=== STEP 2: Copy source member using zoautil_py ===")
