@@ -1,0 +1,44 @@
+name: LNX1 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  lnx1-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.LNX1_PEM_KEY }}" > ~/.ssh/lnx1key.pem
+          chmod 600 ~/.ssh/lnx1key.pem
+
+      - name: Connect and Run Commands
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/lnx1key.pem linux1@${{ secrets.LNX1_IP }} << 'EOF'
+          
+          echo "=== Step 1: Explore Root ==="
+          cd /
+          ls -l
+          
+          echo "=== Step 2: Test Permissions (Expect Error) ==="
+          ls /root || echo "Permission denied (Expected)"
+          
+          echo "=== Step 3: Elevate Authority ==="
+          sudo ls /root
+          
+          echo "=== Step 4: Install Nano ==="
+          sudo yum install -y nano
+          
+          echo "=== Step 5: Create File (Simulating Nano) ==="
+          cd /home/linux1
+          echo "Hello LinuxONE - Automated via GitHub Actions" > my-file
+          cat my-file
+          
+          echo "=== Step 6: Watch Logs (Timeout after 5s) ==="
+          sudo timeout 5 tail -f /var/log/messages || echo "Log viewing complete"
+          
+          echo "=== Step 7: Submit Challenge ==="
+          curl -X POST -d email=djamaahmeddahir@gmail.com http://192.86.32.12:1880/LNX1
+          
+          EOF
