@@ -29,32 +29,38 @@ jobs:
           SRC = "ZXP.PUBLIC.JCL(GIMSAMPU)"
           DST = f"{USER}.JCL(GIMSAMPU)"
 
-          print("=== STEP 1: Ensure JCL dataset exists (LRECL=32760 - maximum) ===")
+          print("=== STEP 1: Ensure JCL dataset exists (LRECL=120 for edited lines) ===")
           # Delete old dataset to start fresh
           run_tso(f"DELETE '{USER}.JCL'")
-          # Allocate with maximum LRECL to handle extremely long lines
-          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(32760) SPACE(1,1) TRACKS")
+          # Allocate with LRECL=120. Original is 80, edits add a few chars.
+          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS")
           print(f"Allocate result: {res.strip()}")
 
-          print("=== STEP 2: Copy source member using zoautil_py ===")
+          print("=== STEP 2: Copy source member ===")
           try:
               datasets.copy(SRC, DST)
-              print("Copy successful using datasets.copy()")
+              print("Copy successful")
           except Exception as e:
               print(f"Error copying: {e}")
 
-          print("=== STEP 3: Read and modify JCL ===")
+          print("=== STEP 3: Read, Fix Line Lengths, and Modify ===")
           try:
+              # Read the content
               content = datasets.read(DST)
-              print("JCL read successfully")
+              print(f"Raw content length: {len(content)}")
               
+              # CRITICAL FIX: The source is likely FB/80. 
+              # datasets.read might be returning a blob. Split every 80 chars to restore lines.
+              lines = [content[i:i+80] for i in range(0, len(content), 80)]
+              content = "\n".join(lines)
+              print("Restored line breaks (split every 80 chars)")
+
               # 1. Symbolics
               content = content.replace("&HLQ&", "&SYSUID..SMP")
               content = content.replace("&VOLUME&", "VPWRKA")
               content = content.replace("&UNIT&", "3390")
 
               # 2. Space units (CYL -> TRK)
-              # Important: Replace CYLINDERS before CYL to avoid partial matches
               content = content.replace("CYLINDERS", "TRACKS")
               content = content.replace("CYL", "TRK")
 
@@ -66,7 +72,7 @@ jobs:
 
               print("Edits applied successfully")
 
-              # Write back to dataset
+              # Write back
               datasets.write(DST, content)
               print("Modified JCL written successfully")
           except Exception as e:
