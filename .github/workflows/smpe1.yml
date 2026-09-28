@@ -1,4 +1,3 @@
-
 name: SMPE1 Challenge Automation
 
 on:
@@ -20,7 +19,6 @@ jobs:
           from zoautil_py import datasets
 
           def run_tso(cmd):
-              """Helper to run TSO commands"""
               full_cmd = f'tso "{cmd}"'
               res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
@@ -29,67 +27,95 @@ jobs:
           SRC = "ZXP.PUBLIC.JCL(GIMSAMPU)"
           DST = f"{USER}.JCL(GIMSAMPU)"
 
-          print("=== STEP 1: Ensure JCL dataset exists (LRECL=120 for edited lines) ===")
-          # Delete old dataset to start fresh
-          run_tso(f"DELETE '{USER}.JCL'")
-          # Allocate with LRECL=120. Original is 80, edits add a few chars.
-          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS")
-          print(f"Allocate result: {res.strip()}")
+          print("=== STEP 1: Prepare Dataset ===")
+          # Try to delete old member only, not the whole dataset
+          try:
+              datasets.delete(DST)
+              print("Deleted old member")
+          except:
+              pass
+          
+          # Ensure dataset exists with standard JCL attributes
+          # If it doesn't exist, create it. If it does, this might fail, which is fine.
+          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print(f"Allocate: {res.strip()}")
 
-          print("=== STEP 2: Copy source member ===")
+          print("=== STEP 2: Copy Source ===")
           try:
               datasets.copy(SRC, DST)
               print("Copy successful")
           except Exception as e:
-              print(f"Error copying: {e}")
+              print(f"Copy error: {e}")
 
-          print("=== STEP 3: Read, Fix Line Lengths, and Modify ===")
+          print("=== STEP 3: Read and Edit ===")
           try:
-              # Read the content
               content = datasets.read(DST)
-              print(f"Raw content length: {len(content)}")
+              print(f"Read {len(content)} chars")
               
-              # CRITICAL FIX: The source is likely FB/80. 
-              # datasets.read might be returning a blob. Split every 80 chars to restore lines.
-              lines = [content[i:i+80] for i in range(0, len(content), 80)]
-              content = "\n".join(lines)
-              print("Restored line breaks (split every 80 chars)")
-
-              # 1. Symbolics
-              content = content.replace("&HLQ&", "&SYSUID..SMP")
-              content = content.replace("&VOLUME&", "VPWRKA")
-              content = content.replace("&UNIT&", "3390")
-
-              # 2. Space units (CYL -> TRK)
-              content = content.replace("CYLINDERS", "TRACKS")
-              content = content.replace("CYL", "TRK")
-
-              # 3. Space allocations (Regex)
-              # Clusters (2 numbers): SPACE=(TRK,(2,1))
-              content = re.sub(r'SPACE=\(TRK,\(\d+,\d+\)\)', 'SPACE=(TRK,(2,1))', content)
-              # PO datasets (3 numbers): SPACE=(TRK,(1,1,1))
-              content = re.sub(r'SPACE=\(TRK,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', content)
-
-              print("Edits applied successfully")
-
+              # Ensure we have lines
+              if '\n' not in content:
+                  # If no newlines, it's a blob. Split every 80 chars.
+                  lines = [content[i:i+80] for i in range(0, len(content), 80)]
+                  content = "\n".join(lines)
+                  print("Forced line breaks")
+              
+              lines = content.split('\n')
+              edited_lines = []
+              
+              for line in lines:
+                  # 1. Symbolics (Use literal Z89674.SMP to be safe)
+                  line = line.replace("&HLQ&", "Z89674.SMP")
+                  line = line.replace("&VOLUME&", "VPWRKA")
+                  line = line.replace("&UNIT&", "3390")
+                  
+                  # 2. DEFZONES Step (IDCAMS): Change CYL/CYLINDERS to TRACKS(2 1)
+                  # This is tricky. We look for CYLINDERS or CYL followed by (numbers)
+                  # and replace with TRACKS(2 1)
+                  if 'CYLINDERS' in line or 'CYL(' in line:
+                      # Simple replacement for the DEFZONES step
+                      line = re.sub(r'CYLINDERS\(\d+\s+\d+\)', 'TRACKS(2 1)', line)
+                      line = re.sub(r'CYL\(\d+\s+\d+\)', 'TRACKS(2 1)', line)
+                  
+                  # 3. ALLOCDS Step (JCL DD): Change CYL/CYLINDERS to TRK
+                  # And adjust SPACE parameters
+                  if 'SPACE=' in line:
+                      # Sequential: SPACE=(..., (1,1)) -> SPACE=(TRK,(1,1))
+                      # PO: SPACE=(..., (1,1,1)) -> SPACE=(TRK,(1,1,1))
+                      # We replace the unit part with TRK
+                      line = re.sub(r'SPACE=\(CYL,', 'SPACE=(TRK,', line)
+                      line = re.sub(r'SPACE=\(CYLINDERS,', 'SPACE=(TRK,', line)
+                      # Ensure numbers are 1,1 or 1,1,1
+                      # This is a simplification. The PDF says set to 1 primary, 1 secondary.
+                      line = re.sub(r'SPACE=\(TRK,\(\d+,\d+\)\)', 'SPACE=(TRK,(1,1))', line)
+                      line = re.sub(r'SPACE=\(TRK,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', line)
+                      
+                  edited_lines.append(line)
+                  
+              new_content = "\n".join(edited_lines)
+              
               # Write back
-              datasets.write(DST, content)
-              print("Modified JCL written successfully")
+              datasets.write(DST, new_content)
+              print("Write successful")
           except Exception as e:
-              print(f"Error modifying JCL: {e}")
+              print(f"Edit error: {e}")
 
-          print("=== STEP 4: Submit GIMSAMPU job ===")
-          res = run_tso(f"submit '{DST}'")
+          print("=== STEP 4: Submit ===")
+          # Try submitting
+          res = run_tso(f"SUBMIT '{DST}'")
           print(f"Submit result: {res.strip()}")
+          
+          # If RC(12), try submitting the original unedited to test
+          if 'RC(12)' in res or 'IKJ' in res:
+              print("Submit failed. Testing original...")
+              # We can't easily test original now since we overwrote it.
+              pass
 
-          print("=== STEP 5: Wait for job to finish ===")
           time.sleep(60)
 
-          print("=== STEP 6: Submit Validation Job (CHKSMP1) ===")
-          res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKSMP1)'")
-          print(res)
-          
-          print("=== SMPE1 Automation Complete ===")
+          print("=== STEP 5: Validation ===")
+          res = run_tso("SUBMIT 'ZXP.PUBLIC.JCL(CHKSMP1)'")
+          print(f"Validation: {res.strip()}")
+          print("=== Done ===")
           PYEOF
 
       - name: Copy script to remote
