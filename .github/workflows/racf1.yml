@@ -1,4 +1,3 @@
-
 name: RACF1 Challenge Automation
 
 on:
@@ -17,15 +16,15 @@ jobs:
           import subprocess
           import time
 
-          def run_cmd(cmd):
-              """Run shell command"""
-              res = subprocess.run(cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
-              return res.stdout + res.stderr
-
           def run_tso(cmd):
               """Run TSO command"""
               full_cmd = f'tso "{cmd}"'
               res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              return res.stdout + res.stderr
+
+          def run_shell(cmd):
+              """Run shell command"""
+              res = subprocess.run(cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
           USER = "Z89674"
@@ -36,39 +35,46 @@ jobs:
           res = run_tso(f"ALLOCATE DSNAME('{DATASET}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
           print(f"Allocate: {res.strip()}")
 
-          print("=== STEP 2: Write JCL to USS file (ASCII) ===")
-          jcl_lines = [
-              "//RACF1    JOB ,NOTIFY=&SYSUID",
-              "//STEP1    EXEC PGM=IKJEFT01",
-              "//SYSTSPRT DD SYSOUT=*",
-              "//SYSTSIN  DD *",
-              f"ADDSD '{DATASET}' UACC(NONE)",
-              f"PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)",
-              "/*"
-          ]
-          jcl_content = "\n".join(jcl_lines) + "\n"
-          
+          print("=== STEP 2: Write REXX script to USS file ===")
+          # REXX script that will execute RACF commands
+          rexx_script = f"""/* REXX */
+  "ADDSD '{DATASET}' UACC(NONE)"
+  "PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)"
+  "LISTDSD DA('{DATASET}') ALL"
+"""
+          with open('/z/z89674/RACF1.rexx', 'w') as f:
+              f.write(rexx_script)
+          print("REXX script written")
+
+          print("=== STEP 3: Convert REXX to EBCDIC ===")
+          run_shell("iconv -f UTF-8 -t IBM-1047 /z/z89674/RACF1.rexx > /z/z89674/RACF1.ebc 2>&1")
+          print("Converted to EBCDIC")
+
+          print("=== STEP 4: Write JCL to run REXX script ===")
+          jcl_content = f"""//RACF1 JOB ,NOTIFY=&SYSUID
+//STEP1 EXEC PGM=IKJEFT01
+//SYSEXEC DD DSN='/z/z89674',DISP=SHR
+//SYSTSPRT DD SYSOUT=*
+//SYSTSIN DD *
+  EX 'Z89674.RACF1'
+/*
+"""
           with open('/z/z89674/RACF1.jcl', 'w') as f:
               f.write(jcl_content)
-          print("JCL written to USS file (ASCII)")
+          print("JCL written")
 
-          print("=== STEP 3: Convert JCL to EBCDIC ===")
-          # Convert ASCII to EBCDIC (IBM-1047) using iconv
-          res = run_cmd("iconv -f UTF-8 -t IBM-1047 /z/z89674/RACF1.jcl > /z/z89674/RACF1.ebc 2>&1")
-          print(f"Convert result: {res.strip()}")
+          print("=== STEP 5: Convert JCL to EBCDIC ===")
+          run_shell("iconv -f UTF-8 -t IBM-1047 /z/z89674/RACF1.jcl > /z/z89674/RACF1J.ebc 2>&1")
+          print("JCL converted to EBCDIC")
 
-          print("=== STEP 4: Submit RACF batch job from EBCDIC file ===")
-          res = run_tso("submit '/z/z89674/RACF1.ebc'")
+          print("=== STEP 6: Submit RACF batch job ===")
+          res = run_tso("submit '/z/z89674/RACF1J.ebc'")
           print(f"Submit result: {res.strip()}")
 
-          print("=== STEP 5: Wait for RACF job to finish ===")
+          print("=== STEP 7: Wait for RACF job to finish ===")
           time.sleep(30)
 
-          print("=== STEP 6: Verify RACF profile was created ===")
-          res = run_tso(f"LISTDSD DA('{DATASET}') ALL")
-          print(f"List result: {res.strip()}")
-
-          print("=== STEP 7: Submit Validation Job (CHKRACF1) ===")
+          print("=== STEP 8: Submit Validation Job (CHKRACF1) ===")
           res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKRACF1)'")
           print(res)
           
