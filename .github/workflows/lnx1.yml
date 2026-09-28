@@ -39,6 +39,6 @@ jobs:
           sudo timeout 5 tail -f /var/log/messages || echo "Log viewing complete"
           
           echo "=== Step 7: Submit Challenge ==="
-          curl -X POST -d email=djamaahmeddahir@gmail.com http://192.86.32.12:1880/LNX1
+          curl -X POST -d email=djamaahmeddaher@gmail.com http://192.86.32.12:1880/LNX1
           
           EOF
