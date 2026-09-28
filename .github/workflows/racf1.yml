@@ -1,3 +1,4 @@
+
 name: RACF1 Challenge Automation
 
 on:
@@ -31,9 +32,12 @@ jobs:
           print(res)
 
           print("=== STEP 2: Add RACF dataset profile with UACC(NONE) ===")
+          # First, delete any existing profile
+          run_tso(f"DELDSD '{USER}.magic'")
+          
           # ADDSD command to create RACF profile for the dataset
           # Since the dataset exists, we don't use GENERIC
-          res = run_tso(f"ADDSd '{USER}.magic' UACC(NONE)")
+          res = run_tso(f"ADDSD '{USER}.magic' UACC(NONE)")
           print(res)
 
           print("=== STEP 3: Permit IBM0001 UPDATE access ===")
