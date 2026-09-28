@@ -15,6 +15,8 @@ jobs:
           cat > racf1.py << 'PYEOF'
           import subprocess
           import time
+          import re
+          from zoautil_py import datasets
 
           def run_cmd(cmd):
               res = subprocess.run(cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
@@ -27,49 +29,80 @@ jobs:
 
           USER = "Z89674"
           DATASET = f"{USER}.MAGIC"
+          JCL_DS = f"{USER}.RACF.JCL"
 
           print("=== STEP 1: Create sequential dataset Z89674.MAGIC ===")
           run_tso(f"DELETE '{DATASET}'")
           res = run_tso(f"ALLOCATE DSNAME('{DATASET}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
           print(f"Allocate MAGIC: {res.strip()}")
 
-          print("=== STEP 2: Create JCL PDS ===")
-          run_tso(f"DELETE '{USER}.JCL'")
-          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-          print(f"Allocate JCL PDS: {res.strip()}")
+          print("=== STEP 2: Create JCL dataset ===")
+          run_tso(f"DELETE '{JCL_DS}'")
+          res = run_tso(f"ALLOCATE DSNAME('{JCL_DS}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print(f"Allocate JCL DS: {res.strip()}")
 
-          print("=== STEP 3: Write JCL to USS file ===")
-          # Write JCL with proper formatting (each line padded to 80 chars)
+          print("=== STEP 3: Write RACF JCL ===")
+          # Standard JOB card with CLASS=7 (known to work on this system)
+          # MSGLEVEL=(1,1) ensures we see messages in the spool
+          jcl_content = f"""//RACF1 JOB ,NOTIFY=&SYSUID,CLASS=7,MSGLEVEL=(1,1)
+          //STEP1 EXEC PGM=IKJEFT01
+          //SYSTSPRT DD SYSOUT=*
+          //SYSTSIN DD *
+          ADDSD '{DATASET}' UACC(NONE)
+          PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)
+          /*
+          """
+          # Note: The indentation above inside the f-string might be an issue for JCL.
+          # Let's use a list to be safe.
           jcl_lines = [
-              "//RACFJOB JOB ,NOTIFY=&SYSUID,CLASS=7",
-              "//STEP1 EXEC PGM=IKJEFT01",
-              "//SYSTSPRT DD SYSOUT=*",
-              "//SYSTSIN DD *",
+              f"//RACF1 JOB ,NOTIFY=&SYSUID,CLASS=7,MSGLEVEL=(1,1)",
+              f"//STEP1 EXEC PGM=IKJEFT01",
+              f"//SYSTSPRT DD SYSOUT=*",
+              f"//SYSTSIN DD *",
               f"ADDSD '{DATASET}' UACC(NONE)",
               f"PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)",
-              "/*"
+              f"/*"
           ]
-          
-          # Pad each line to 80 characters
-          padded_lines = [line.ljust(80) for line in jcl_lines]
-          jcl_content = "\n".join(padded_lines) + "\n"
-          
-          with open('/z/z89674/RACFJOB.jcl', 'w') as f:
-              f.write(jcl_content)
-          print("JCL written to USS file")
+          jcl_content = "\n".join(jcl_lines)
 
-          print("=== STEP 4: Copy JCL to dataset member using OPUT ===")
-          res = run_tso(f"OPUT '/z/z89674/RACFJOB.jcl' '{USER}.JCL(RACFJOB)'")
-          print(f"OPUT result: {res.strip()}")
+          try:
+              datasets.write(JCL_DS, jcl_content)
+              print("JCL written successfully")
+          except Exception as e:
+              print(f"Error writing JCL: {e}")
 
-          print("=== STEP 5: Submit RACF batch job ===")
-          res = run_tso(f"submit '{USER}.JCL(RACFJOB)'")
+          print("=== STEP 4: Submit RACF batch job ===")
+          res = run_tso(f"submit '{JCL_DS}'")
           print(f"Submit result: {res.strip()}")
 
-          print("=== STEP 6: Wait for job ===")
+          print("=== STEP 5: Wait for job and capture output ===")
           time.sleep(30)
 
-          print("=== STEP 7: Submit Validation Job ===")
+          # Find the job ID using jls
+          jls_out = run_cmd("jls")
+          match = re.search(r'RACF1\s+(JOB\d+)', jls_out)
+          job_id = None
+          if match:
+              job_id = match.group(1)
+          else:
+              # Fallback: take the last job
+              matches = re.findall(r'(JOB\d+)', jls_out)
+              if matches:
+                  job_id = matches[-1]
+          
+          print(f"Found Job ID: {job_id}")
+
+          if job_id:
+              print("--- Capturing SYSTSPRT (TSO Output) ---")
+              # Use iconv to convert EBCDIC to readable text
+              spool = run_cmd(f"jcat -j {job_id} -d SYSTSPRT 2>/dev/null | iconv -f IBM-1047 -t UTF-8 2>/dev/null")
+              print(spool)
+              
+              print("--- Capturing JESMSGLG (JCL Messages) ---")
+              spool_jes = run_cmd(f"jcat -j {job_id} -d JESMSGLG 2>/dev/null | iconv -f IBM-1047 -t UTF-8 2>/dev/null")
+              print(spool_jes)
+
+          print("=== STEP 6: Submit Validation Job ===")
           res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKRACF1)'")
           print(res)
 
