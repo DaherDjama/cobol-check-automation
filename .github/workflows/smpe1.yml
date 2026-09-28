@@ -34,8 +34,6 @@ jobs:
               print("Source JCL read successfully")
           except Exception as e:
               print(f"Error reading source: {e}")
-              # Fallback if name is slightly different
-              content = datasets.read("ZXP.PUBLIC.JCL(GIMSAMPU)")
 
           print("=== STEP 2: Apply required edits ===")
           # 1. Symbolics
@@ -44,26 +42,22 @@ jobs:
           content = content.replace("&UNIT&", "3390")
 
           # 2. Space allocations (CYL -> TRK)
-          # The PDF asks to change CYL/CYLINDERS to TRK/TRACKS
           content = content.replace("CYLINDERS", "TRACKS")
           content = content.replace("CYL", "TRK")
 
-          # 3. Adjust space numbers (Best effort regex)
-          # DEFZONES step usually has larger allocations, ALLOCDS has smaller.
-          # We will try to standardize to the requested values:
-          # Clusters: SPACE=(TRK,(2,1))
-          # PO datasets: SPACE=(TRK,(1,1,1))
-          # Sequential: SPACE=(TRK,(1,1))
-          
-          # Replace any SPACE=(TRK,(X,Y)) with SPACE=(TRK,(2,1)) for clusters (assuming 2 numbers)
+          # 3. Adjust space numbers using regex
+          # Clusters (2 numbers): SPACE=(TRK,(2,1))
           content = re.sub(r'SPACE=\(TRK,\(\d+,\d+\)\)', 'SPACE=(TRK,(2,1))', content)
-          # Replace any SPACE=(TRK,(X,Y,Z)) with SPACE=(TRK,(1,1,1)) for PO datasets (assuming 3 numbers)
+          # PO datasets (3 numbers): SPACE=(TRK,(1,1,1))
           content = re.sub(r'SPACE=\(TRK,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', content)
 
           print("Edits applied")
 
-          print("=== STEP 3: Ensure JCL dataset exists and write ===")
-          run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print("=== STEP 3: Ensure JCL dataset exists (LRECL=120) and write ===")
+          # Allocate with LRECL=120 to handle long lines
+          run_tso(f"DELETE '{USER}.JCL'")
+          run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS")
+          
           try:
               datasets.delete(DST)
               print("Deleted old GIMSAMPU member")
