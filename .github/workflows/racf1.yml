@@ -15,13 +15,10 @@ jobs:
           cat > racf1.py << 'PYEOF'
           import subprocess
           import time
-          import os
-
-          def run_cmd(cmd):
-              res = subprocess.run(cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
-              return res.stdout + res.stderr
+          from zoautil_py import datasets
 
           def run_tso(cmd):
+              """Run TSO command"""
               full_cmd = f'tso "{cmd}"'
               res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
@@ -29,12 +26,26 @@ jobs:
           USER = "Z89674"
           DATASET = f"{USER}.MAGIC"
 
-          print("=== STEP 1: Create dataset ===")
+          print("=== STEP 1: Create sequential dataset Z89674.MAGIC ===")
+          # Delete if exists first
           run_tso(f"DELETE '{DATASET}'")
-          run_tso(f"ALLOCATE DSNAME('{DATASET}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          # Allocate the dataset (PS = Physical Sequential)
+          res = run_tso(f"ALLOCATE DSNAME('{DATASET}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print(f"Allocate: {res.strip()}")
 
-          print("=== STEP 2: Write JCL ===")
-          # Use a list of strings to avoid ALL syntax errors
+          print("=== STEP 2: Ensure JCL dataset exists ===")
+          # Make sure Z89674.JCL exists as a PDS
+          run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+
+          print("=== STEP 3: Write RACF JCL to dataset ===")
+          # Delete old member if it exists
+          try:
+              datasets.delete(f"{USER}.JCL(RACF1)")
+              print("Deleted old RACF1 member")
+          except:
+              pass
+
+          # Use a list of strings to avoid syntax errors
           jcl_lines = [
               f"//RACF1 JOB ,NOTIFY=&SYSUID",
               f"//STEP1 EXEC PGM=IKJEFT01",
@@ -44,26 +55,26 @@ jobs:
               f"PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)",
               f"/*"
           ]
-          jcl_content = "\n".join(jcl_lines) + "\n"
-          
-          # Clean up old files
-          if os.path.exists('/z/z89674/RACF1.jcl'):
-              os.remove('/z/z89674/RACF1.jcl')
-          if os.path.exists('/z/z89674/RACF1.ebc'):
-              os.remove('/z/z89674/RACF1.ebc')
+          jcl_content = "\n".join(jcl_lines)
 
-          with open('/z/z89674/RACF1.jcl', 'w') as f:
-              f.write(jcl_content)
+          try:
+              datasets.write(f"{USER}.JCL(RACF1)", jcl_content)
+              print("RACF JCL written to dataset successfully")
+          except Exception as e:
+              print(f"Error writing JCL: {e}")
 
-          print("=== STEP 3: Convert to EBCDIC ===")
-          run_cmd("iconv -f UTF-8 -t IBM-1047 /z/z89674/RACF1.jcl > /z/z89674/RACF1.ebc")
+          print("=== STEP 4: Submit RACF batch job ===")
+          res = run_tso(f"submit '{USER}.JCL(RACF1)'")
+          print(f"Submit result: {res.strip()}")
 
-          print("=== STEP 4: Submit ===")
-          run_tso("submit '/z/z89674/RACF1.ebc'")
+          print("=== STEP 5: Wait for RACF job to finish ===")
           time.sleep(30)
 
-          print("=== STEP 5: Validation ===")
-          run_tso("submit 'ZXP.PUBLIC.JCL(CHKRACF1)'")
+          print("=== STEP 6: Submit Validation Job (CHKRACF1) ===")
+          res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKRACF1)'")
+          print(res)
+          
+          print("=== RACF1 Automation Complete ===")
           PYEOF
 
       - name: Copy script to remote
