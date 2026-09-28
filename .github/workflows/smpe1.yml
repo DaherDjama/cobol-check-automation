@@ -1,0 +1,99 @@
+name: SMPE1 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smpe1-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get install -y sshpass
+
+      - name: Create Python script locally
+        run: |
+          cat > smpe1.py << 'PYEOF'
+          import subprocess
+          import time
+          import re
+          from zoautil_py import datasets
+
+          def run_tso(cmd):
+              """Helper to run TSO commands"""
+              full_cmd = f'tso "{cmd}"'
+              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              return res.stdout + res.stderr
+
+          USER = "Z89674"
+          SRC = "ZXP.PUBLIC.JCL(GIMSAMPU)"
+          DST = f"{USER}.JCL(GIMSAMPU)"
+
+          print("=== STEP 1: Read source JCL ===")
+          try:
+              content = datasets.read(SRC)
+              print("Source JCL read successfully")
+          except Exception as e:
+              print(f"Error reading source: {e}")
+              # Fallback if name is slightly different
+              content = datasets.read("ZXP.PUBLIC.JCL(GIMSAMPU)")
+
+          print("=== STEP 2: Apply required edits ===")
+          # 1. Symbolics
+          content = content.replace("&HLQ&", "&SYSUID..SMP")
+          content = content.replace("&VOLUME&", "VPWRKA")
+          content = content.replace("&UNIT&", "3390")
+
+          # 2. Space allocations (CYL -> TRK)
+          # The PDF asks to change CYL/CYLINDERS to TRK/TRACKS
+          content = content.replace("CYLINDERS", "TRACKS")
+          content = content.replace("CYL", "TRK")
+
+          # 3. Adjust space numbers (Best effort regex)
+          # DEFZONES step usually has larger allocations, ALLOCDS has smaller.
+          # We will try to standardize to the requested values:
+          # Clusters: SPACE=(TRK,(2,1))
+          # PO datasets: SPACE=(TRK,(1,1,1))
+          # Sequential: SPACE=(TRK,(1,1))
+          
+          # Replace any SPACE=(TRK,(X,Y)) with SPACE=(TRK,(2,1)) for clusters (assuming 2 numbers)
+          content = re.sub(r'SPACE=\(TRK,\(\d+,\d+\)\)', 'SPACE=(TRK,(2,1))', content)
+          # Replace any SPACE=(TRK,(X,Y,Z)) with SPACE=(TRK,(1,1,1)) for PO datasets (assuming 3 numbers)
+          content = re.sub(r'SPACE=\(TRK,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', content)
+
+          print("Edits applied")
+
+          print("=== STEP 3: Ensure JCL dataset exists and write ===")
+          run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          try:
+              datasets.delete(DST)
+              print("Deleted old GIMSAMPU member")
+          except:
+              pass
+
+          try:
+              datasets.write(DST, content)
+              print("Modified JCL written successfully")
+          except Exception as e:
+              print(f"Error writing JCL: {e}")
+
+          print("=== STEP 4: Submit GIMSAMPU job ===")
+          res = run_tso(f"submit '{DST}'")
+          print(f"Submit result: {res.strip()}")
+
+          print("=== STEP 5: Wait for job to finish ===")
+          time.sleep(45)
+
+          print("=== STEP 6: Submit Validation Job (CHKSMP1) ===")
+          res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKSMP1)'")
+          print(res)
+          
+          print("=== SMPE1 Automation Complete ===")
+          PYEOF
+
+      - name: Copy script to remote
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no smpe1.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/smpe1.py
+
+      - name: Execute automation script
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/smpe1.py"
