@@ -1,3 +1,4 @@
+
 name: RACF1 Challenge Automation
 
 on:
@@ -18,7 +19,6 @@ jobs:
           from zoautil_py import datasets
 
           def run_tso(cmd):
-              """Run TSO command"""
               full_cmd = f'tso "{cmd}"'
               res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
@@ -27,57 +27,50 @@ jobs:
           DATASET = f"{USER}.MAGIC"
 
           print("=== STEP 1: Create sequential dataset Z89674.MAGIC ===")
-          # Delete if exists first to ensure clean slate
           run_tso(f"DELETE '{DATASET}'")
-          # Allocate the dataset (PS = Physical Sequential)
           res = run_tso(f"ALLOCATE DSNAME('{DATASET}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-          print(f"Allocate result: {res.strip()}")
+          print(f"Allocate: {res.strip()}")
 
-          print("=== STEP 2: Prepare JCL dataset ===")
-          # Ensure the JCL PDS exists (from previous challenges)
-          run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-          
-          # Delete the old RACF1 member to prevent corruption
+          print("=== STEP 2: Write minimal JCL to dataset ===")
+          # Delete old member
           try:
               datasets.delete(f"{USER}.JCL(RACF1)")
-              print("Deleted old RACF1 member")
           except:
               pass
 
-          print("=== STEP 3: Write RACF JCL to dataset ===")
-          # Use the JOB card format extracted from the working CHKRACF1 job
-          # CLASS=7 is required for this system
+          # Ensure JCL PDS exists
+          run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+
+          # Minimal JCL - no CLASS, no MSGLEVEL, just the basics
           jcl_lines = [
-              f"//RACF1 JOB ,NOTIFY=&SYSUID,CLASS=7",
-              f"//STEP1 EXEC PGM=IKJEFT01",
-              f"//SYSTSPRT DD SYSOUT=*",
-              f"//SYSTSIN DD *",
+              "//RACF1 JOB",
+              "//STEP1 EXEC PGM=IKJEFT01",
+              "//SYSTSPRT DD SYSOUT=*",
+              "//SYSTSIN DD *",
               f"ADDSD '{DATASET}' UACC(NONE)",
               f"PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)",
-              f"LISTDSD DA('{DATASET}') ALL",
-              f"/*"
+              "/*"
           ]
           jcl_content = "\n".join(jcl_lines)
 
           try:
               datasets.write(f"{USER}.JCL(RACF1)", jcl_content)
-              print("JCL written successfully to Z89674.JCL(RACF1)")
+              print("JCL written successfully")
           except Exception as e:
-              print(f"Error writing JCL: {e}")
+              print(f"Error: {e}")
 
-          print("=== STEP 4: Submit RACF batch job ===")
+          print("=== STEP 3: Submit JCL ===")
           res = run_tso(f"submit '{USER}.JCL(RACF1)'")
-          print(f"Submit result: {res.strip()}")
-          # Note: RC(12) might appear here due to SSH encoding, but the job may still submit.
+          print(f"Submit: {res.strip()}")
 
-          print("=== STEP 5: Wait for job to complete ===")
-          time.sleep(45)
+          print("=== STEP 4: Wait ===")
+          time.sleep(30)
 
-          print("=== STEP 6: Submit Validation Job (CHKRACF1) ===")
+          print("=== STEP 5: Submit validation ===")
           res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKRACF1)'")
           print(res)
 
-          print("=== RACF1 Automation Complete ===")
+          print("=== RACF1 Complete ===")
           PYEOF
 
       - name: Copy script to remote
