@@ -15,49 +15,33 @@ jobs:
           cat > racf1.py << 'PYEOF'
           import subprocess
           import time
-          from zoautil_py import datasets
+
+          def run_cmd(cmd):
+              res = subprocess.run(cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              return res.stdout + res.stderr
 
           def run_tso(cmd):
-              """Run TSO command"""
               full_cmd = f'tso "{cmd}"'
               res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
           USER = "Z89674"
           DATASET = f"{USER}.MAGIC"
-          JCL_DS = f"{USER}.RACF.JCL" # New dataset for our JCL
 
           print("=== STEP 1: Create sequential dataset Z89674.MAGIC ===")
           run_tso(f"DELETE '{DATASET}'")
           res = run_tso(f"ALLOCATE DSNAME('{DATASET}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
           print(f"Allocate MAGIC: {res.strip()}")
 
-          print("=== STEP 2: Get valid JOB card from public JCL ===")
-          job_card = "//RACF1 JOB ,NOTIFY=&SYSUID" # Default fallback
-          try:
-              # Read the first line of the working validation job to copy its JOB syntax
-              ref_jcl = datasets.read("ZXP.PUBLIC.JCL(CHKRACF1)")
-              first_line = ref_jcl.split('\n')[0]
-              # Replace the job name with RACF1
-              # Format is usually //JOBNAME JOB ...
-              parts = first_line.split(' ', 2) # Split into //JOBNAME, JOB, ...rest
-              if len(parts) >= 3:
-                  job_card = f"//RACF1 JOB {parts[2]}"
-              elif len(parts) == 2:
-                  job_card = f"//RACF1 JOB"
-              print(f"Using JOB card: {job_card}")
-          except Exception as e:
-              print(f"Could not read reference JCL, using default: {e}")
+          print("=== STEP 2: Create JCL PDS ===")
+          run_tso(f"DELETE '{USER}.JCL'")
+          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print(f"Allocate JCL PDS: {res.strip()}")
 
-          print("=== STEP 3: Create JCL dataset ===")
-          run_tso(f"DELETE '{JCL_DS}'")
-          res = run_tso(f"ALLOCATE DSNAME('{JCL_DS}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-          print(f"Allocate JCL DS: {res.strip()}")
-
-          print("=== STEP 4: Write RACF JCL ===")
-          # Use the extracted JOB card
+          print("=== STEP 3: Write JCL to USS file ===")
+          # Write JCL with proper formatting (each line padded to 80 chars)
           jcl_lines = [
-              job_card,
+              "//RACFJOB JOB ,NOTIFY=&SYSUID,CLASS=7",
               "//STEP1 EXEC PGM=IKJEFT01",
               "//SYSTSPRT DD SYSOUT=*",
               "//SYSTSIN DD *",
@@ -65,17 +49,21 @@ jobs:
               f"PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)",
               "/*"
           ]
-          jcl_content = "\n".join(jcl_lines)
+          
+          # Pad each line to 80 characters
+          padded_lines = [line.ljust(80) for line in jcl_lines]
+          jcl_content = "\n".join(padded_lines) + "\n"
+          
+          with open('/z/z89674/RACFJOB.jcl', 'w') as f:
+              f.write(jcl_content)
+          print("JCL written to USS file")
 
-          try:
-              datasets.write(JCL_DS, jcl_content)
-              print("JCL written successfully")
-          except Exception as e:
-              print(f"Error writing JCL: {e}")
+          print("=== STEP 4: Copy JCL to dataset member using OPUT ===")
+          res = run_tso(f"OPUT '/z/z89674/RACFJOB.jcl' '{USER}.JCL(RACFJOB)'")
+          print(f"OPUT result: {res.strip()}")
 
           print("=== STEP 5: Submit RACF batch job ===")
-          # Submit the PS dataset directly
-          res = run_tso(f"submit '{JCL_DS}'")
+          res = run_tso(f"submit '{USER}.JCL(RACFJOB)'")
           print(f"Submit result: {res.strip()}")
 
           print("=== STEP 6: Wait for job ===")
