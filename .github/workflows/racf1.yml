@@ -1,0 +1,62 @@
+name: RACF1 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  racf1-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get install -y sshpass
+
+      - name: Create Python script locally
+        run: |
+          cat > racf1.py << 'PYEOF'
+          import subprocess
+
+          def run_tso(cmd):
+              """Helper to run TSO commands"""
+              full_cmd = f'tso "{cmd}"'
+              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              return res.stdout + res.stderr
+
+          USER = "Z89674"
+
+          print("=== STEP 1: Create sequential dataset Z89674.magic ===")
+          # Delete if exists first
+          run_tso(f"DELETE '{USER}.magic'")
+          # Allocate a sequential dataset (PS = Physical Sequential)
+          res = run_tso(f"ALLOCATE DSNAME('{USER}.magic') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print(res)
+
+          print("=== STEP 2: Add RACF dataset profile with UACC(NONE) ===")
+          # ADDSD command to create RACF profile for the dataset
+          # Since the dataset exists, we don't use GENERIC
+          res = run_tso(f"ADDSd '{USER}.magic' UACC(NONE)")
+          print(res)
+
+          print("=== STEP 3: Permit IBM0001 UPDATE access ===")
+          # PERMIT command to give IBM0001 write (UPDATE) access
+          res = run_tso(f"PERMIT '{USER}.magic' ID(IBM0001) ACCESS(UPDATE)")
+          print(res)
+
+          print("=== STEP 4: Verify the permissions ===")
+          # List the dataset permissions to verify
+          res = run_tso(f"LISTDSD DA('{USER}.magic') ALL")
+          print(res)
+
+          print("=== STEP 5: Submit Validation Job (CHKRACF1) ===")
+          res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKRACF1)'")
+          print(res)
+          
+          print("=== RACF1 Automation Complete ===")
+          PYEOF
+
+      - name: Copy script to remote
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no racf1.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/racf1.py
+
+      - name: Execute automation script
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/racf1.py"
