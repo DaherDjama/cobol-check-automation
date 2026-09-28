@@ -37,10 +37,17 @@ jobs:
           # Make sure Z89674.JCL exists as a PDS
           run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
 
-          print("=== STEP 3: Write RACF JCL to dataset using datasets.write() ===")
-          # Use a simpler JOB statement format
+          print("=== STEP 3: Write RACF JCL to dataset ===")
+          # Delete old member if it exists to prevent corruption
+          try:
+              datasets.delete(f"{USER}.JCL(RACF1)")
+              print("Deleted old RACF1 member")
+          except:
+              pass
+
+          # Use the simplest JOB statement format
           jcl_lines = [
-              "//RACFJOB JOB (1),'RACF',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID",
+              "//RACF1 JOB ,NOTIFY=&SYSUID",
               "//STEP1 EXEC PGM=IKJEFT01",
               "//SYSTSPRT DD SYSOUT=*",
               "//SYSTSIN DD *",
@@ -51,14 +58,13 @@ jobs:
           jcl_content = "\n".join(jcl_lines)
 
           try:
-              # Write to the JCL dataset
-              datasets.write(f"{USER}.JCL(RACFJOB)", jcl_content)
+              datasets.write(f"{USER}.JCL(RACF1)", jcl_content)
               print("RACF JCL written to dataset successfully")
           except Exception as e:
               print(f"Error writing JCL: {e}")
 
           print("=== STEP 4: Submit RACF batch job ===")
-          res = run_tso(f"submit '{USER}.JCL(RACFJOB)'")
+          res = run_tso(f"submit '{USER}.JCL(RACF1)'")
           print(f"Submit result: {res.strip()}")
 
           print("=== STEP 5: Wait for RACF job to finish ===")
