@@ -1,3 +1,4 @@
+
 name: SMPE1 Challenge Automation
 
 on:
@@ -28,16 +29,15 @@ jobs:
           SRC = "ZXP.PUBLIC.JCL(GIMSAMPU)"
           DST = f"{USER}.JCL(GIMSAMPU)"
 
-          print("=== STEP 1: Ensure JCL dataset exists (LRECL=120) ===")
+          print("=== STEP 1: Ensure JCL dataset exists (LRECL=256 for very long lines) ===")
           # Delete old dataset to start fresh
           run_tso(f"DELETE '{USER}.JCL'")
-          # Allocate with LRECL=120 to handle long lines from the source
-          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS")
+          # Allocate with LRECL=256 to handle very long lines from SMP/E JCL
+          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(256) SPACE(1,1) TRACKS")
           print(f"Allocate result: {res.strip()}")
 
           print("=== STEP 2: Copy source member using zoautil_py ===")
           try:
-              # Use the Python library to copy the member directly
               datasets.copy(SRC, DST)
               print("Copy successful using datasets.copy()")
           except Exception as e:
