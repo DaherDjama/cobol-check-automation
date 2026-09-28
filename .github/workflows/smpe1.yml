@@ -28,54 +28,49 @@ jobs:
           SRC = "ZXP.PUBLIC.JCL(GIMSAMPU)"
           DST = f"{USER}.JCL(GIMSAMPU)"
 
-          print("=== STEP 1: Read source JCL ===")
-          try:
-              content = datasets.read(SRC)
-              print("Source JCL read successfully")
-          except Exception as e:
-              print(f"Error reading source: {e}")
-
-          print("=== STEP 2: Apply required edits ===")
-          # 1. Symbolics
-          content = content.replace("&HLQ&", "&SYSUID..SMP")
-          content = content.replace("&VOLUME&", "VPWRKA")
-          content = content.replace("&UNIT&", "3390")
-
-          # 2. Space allocations (CYL -> TRK)
-          content = content.replace("CYLINDERS", "TRACKS")
-          content = content.replace("CYL", "TRK")
-
-          # 3. Adjust space numbers using regex
-          # Clusters (2 numbers): SPACE=(TRK,(2,1))
-          content = re.sub(r'SPACE=\(TRK,\(\d+,\d+\)\)', 'SPACE=(TRK,(2,1))', content)
-          # PO datasets (3 numbers): SPACE=(TRK,(1,1,1))
-          content = re.sub(r'SPACE=\(TRK,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', content)
-
-          print("Edits applied")
-
-          print("=== STEP 3: Ensure JCL dataset exists (LRECL=120) and write ===")
-          # Allocate with LRECL=120 to handle long lines
+          print("=== STEP 1: Ensure JCL dataset exists (LRECL=120 for long lines) ===")
+          # Allocate with LRECL=120 to prevent BOY5070E errors
           run_tso(f"DELETE '{USER}.JCL'")
           run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS")
-          
-          try:
-              datasets.delete(DST)
-              print("Deleted old GIMSAMPU member")
-          except:
-              pass
 
+          print("=== STEP 2: Copy source member using TSO COPY ===")
+          res = run_tso(f"copy '{SRC}' '{DST}'")
+          print(f"Copy result: {res.strip()}")
+
+          print("=== STEP 3: Read and modify JCL ===")
           try:
+              content = datasets.read(DST)
+              
+              # 1. Symbolics
+              content = content.replace("&HLQ&", "&SYSUID..SMP")
+              content = content.replace("&VOLUME&", "VPWRKA")
+              content = content.replace("&UNIT&", "3390")
+
+              # 2. Space units (CYL -> TRK)
+              # Do CYLINDERS first so it doesn't get partially replaced by CYL -> TRK
+              content = content.replace("CYLINDERS", "TRACKS")
+              content = content.replace("CYL", "TRK")
+
+              # 3. Space allocations (Regex)
+              # Clusters (2 numbers): SPACE=(TRK,(2,1))
+              content = re.sub(r'SPACE=\(TRK,\(\d+,\d+\)\)', 'SPACE=(TRK,(2,1))', content)
+              # PO datasets (3 numbers): SPACE=(TRK,(1,1,1))
+              content = re.sub(r'SPACE=\(TRK,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', content)
+
+              print("Edits applied successfully")
+
+              # Write back to dataset
               datasets.write(DST, content)
               print("Modified JCL written successfully")
           except Exception as e:
-              print(f"Error writing JCL: {e}")
+              print(f"Error modifying JCL: {e}")
 
           print("=== STEP 4: Submit GIMSAMPU job ===")
           res = run_tso(f"submit '{DST}'")
           print(f"Submit result: {res.strip()}")
 
           print("=== STEP 5: Wait for job to finish ===")
-          time.sleep(45)
+          time.sleep(60) # Give it a bit more time for SMP/E jobs
 
           print("=== STEP 6: Submit Validation Job (CHKSMP1) ===")
           res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKSMP1)'")
