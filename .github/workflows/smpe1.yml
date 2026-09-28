@@ -28,18 +28,25 @@ jobs:
           SRC = "ZXP.PUBLIC.JCL(GIMSAMPU)"
           DST = f"{USER}.JCL(GIMSAMPU)"
 
-          print("=== STEP 1: Ensure JCL dataset exists (LRECL=120 for long lines) ===")
-          # Allocate with LRECL=120 to prevent BOY5070E errors
+          print("=== STEP 1: Ensure JCL dataset exists (LRECL=120) ===")
+          # Delete old dataset to start fresh
           run_tso(f"DELETE '{USER}.JCL'")
-          run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS")
+          # Allocate with LRECL=120 to handle long lines from the source
+          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS")
+          print(f"Allocate result: {res.strip()}")
 
-          print("=== STEP 2: Copy source member using TSO COPY ===")
-          res = run_tso(f"copy '{SRC}' '{DST}'")
-          print(f"Copy result: {res.strip()}")
+          print("=== STEP 2: Copy source member using zoautil_py ===")
+          try:
+              # Use the Python library to copy the member directly
+              datasets.copy(SRC, DST)
+              print("Copy successful using datasets.copy()")
+          except Exception as e:
+              print(f"Error copying: {e}")
 
           print("=== STEP 3: Read and modify JCL ===")
           try:
               content = datasets.read(DST)
+              print("JCL read successfully")
               
               # 1. Symbolics
               content = content.replace("&HLQ&", "&SYSUID..SMP")
@@ -47,7 +54,7 @@ jobs:
               content = content.replace("&UNIT&", "3390")
 
               # 2. Space units (CYL -> TRK)
-              # Do CYLINDERS first so it doesn't get partially replaced by CYL -> TRK
+              # Important: Replace CYLINDERS before CYL to avoid partial matches
               content = content.replace("CYLINDERS", "TRACKS")
               content = content.replace("CYL", "TRK")
 
@@ -70,7 +77,7 @@ jobs:
           print(f"Submit result: {res.strip()}")
 
           print("=== STEP 5: Wait for job to finish ===")
-          time.sleep(60) # Give it a bit more time for SMP/E jobs
+          time.sleep(60)
 
           print("=== STEP 6: Submit Validation Job (CHKSMP1) ===")
           res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKSMP1)'")
