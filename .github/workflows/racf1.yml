@@ -27,43 +27,45 @@ jobs:
           DATASET = f"{USER}.MAGIC"
 
           print("=== STEP 1: Create sequential dataset Z89674.MAGIC ===")
-          # Delete if exists first
+          # Delete if exists first (ignore errors)
           run_tso(f"DELETE '{DATASET}'")
-          # Allocate the dataset
+          # Allocate the dataset (PS = Physical Sequential)
           res = run_tso(f"ALLOCATE DSNAME('{DATASET}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
           print(f"Allocate result: {res.strip()}")
 
-          print("=== STEP 2: Ensure JCL dataset exists ===")
-          # Make sure Z89674.JCL exists as a PDS
-          run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-
-          print("=== STEP 3: Write RACF JCL to dataset using datasets.write() ===")
-          # Create JCL content with proper formatting
+          print("=== STEP 2: Write RACF JCL to dataset ===")
+          # Use the exact JOB card format from the successful ASM2 challenge
+          # Note: CLASS=7 is likely required for this system
           jcl_lines = [
-              f"//RACFJOB JOB 1,NOTIFY={USER}",
-              f"//STEP1 EXEC PGM=IKJEFT01",
-              f"//SYSTSPRT DD SYSOUT=*",
-              f"//SYSTSIN DD *",
+              "//RACFJOB  JOB ,NOTIFY=&SYSUID,CLASS=7",
+              "//STEP1    EXEC PGM=IKJEFT01",
+              "//SYSTSPRT DD SYSOUT=*",
+              "//SYSTSIN  DD *",
               f"ADDSD '{DATASET}' UACC(NONE)",
               f"PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)",
-              f"/*"
+              "/*"
           ]
           jcl_content = "\n".join(jcl_lines)
 
           try:
+              # Write to the JCL dataset
               datasets.write(f"{USER}.JCL(RACFJOB)", jcl_content)
               print("RACF JCL written to dataset successfully")
           except Exception as e:
               print(f"Error writing JCL: {e}")
+              # Fallback: Try to allocate JCL dataset first if it doesn't exist
+              run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+              datasets.write(f"{USER}.JCL(RACFJOB)", jcl_content)
+              print("RACF JCL written to dataset successfully (after allocating JCL PDS)")
 
-          print("=== STEP 4: Submit RACF batch job ===")
+          print("=== STEP 3: Submit RACF batch job ===")
           res = run_tso(f"submit '{USER}.JCL(RACFJOB)'")
           print(f"Submit result: {res.strip()}")
 
-          print("=== STEP 5: Wait for RACF job to finish ===")
+          print("=== STEP 4: Wait for RACF job to finish ===")
           time.sleep(30)
 
-          print("=== STEP 6: Submit Validation Job (CHKRACF1) ===")
+          print("=== STEP 5: Submit Validation Job (CHKRACF1) ===")
           res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKRACF1)'")
           print(res)
           
