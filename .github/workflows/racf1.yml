@@ -15,7 +15,6 @@ jobs:
           cat > racf1.py << 'PYEOF'
           import subprocess
           import time
-          from zoautil_py import datasets
 
           def run_tso(cmd):
               """Helper to run TSO commands"""
@@ -24,49 +23,47 @@ jobs:
               return res.stdout + res.stderr
 
           USER = "Z89674"
+          # Use UPPERCASE for dataset and profile names
+          DATASET = f"{USER}.MAGIC"
 
-          print("=== STEP 1: Create sequential dataset Z89674.magic ===")
-          # Delete if exists first
-          run_tso(f"DELETE '{USER}.magic'")
-          # Allocate a sequential dataset (PS = Physical Sequential)
-          res = run_tso(f"ALLOCATE DSNAME('{USER}.magic') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-          print(res)
+          print("=== STEP 1: Create sequential dataset Z89674.MAGIC ===")
+          # Delete if exists first (ignore errors)
+          run_tso(f"DELETE '{DATASET}'")
+          # Allocate the dataset (Uppercase name)
+          res = run_tso(f"ALLOCATE DSNAME('{DATASET}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print(f"Allocate result: {res.strip()}")
 
-          print("=== STEP 2: Ensure JCL dataset exists ===")
-          # Make sure Z89674.JCL exists as a PDS
-          run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-
-          print("=== STEP 3: Write RACF JCL to dataset using datasets.write() ===")
-          # Create JCL content with proper formatting
+          print("=== STEP 2: Write RACF JCL to USS file ===")
+          # Use a list of strings to avoid YAML indentation issues with multi-line strings
           jcl_lines = [
-              f"//RACFJOB  JOB 1,NOTIFY=&SYSUID",
-              f"//STEP1    EXEC PGM=IKJEFT01",
+              f"//RACFJOB JOB 1,NOTIFY={USER}",
+              f"//STEP1 EXEC PGM=IKJEFT01",
               f"//SYSTSPRT DD SYSOUT=*",
-              f"//SYSTSIN  DD *",
-              f"  ADDSD '{USER}.magic' UACC(NONE)",
-              f"  PERMIT '{USER}.magic' ID(IBM0001) ACCESS(UPDATE)",
-              f"  LISTDSD DA('{USER}.magic') ALL",
+              f"//SYSTSIN DD *",
+              f"ADDSD '{DATASET}' UACC(NONE)",
+              f"PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)",
               f"/*"
           ]
-          jcl_content = "\n".join(jcl_lines)
+          # Join the lines with newlines
+          jcl_content = "\n".join(jcl_lines) + "\n"
+          
+          # Write to USS file
+          with open('/z/z89674/RACFJOB.jcl', 'w') as f:
+              f.write(jcl_content)
+          print("JCL written to /z/z89674/RACFJOB.jcl")
 
-          try:
-              datasets.write(f"{USER}.JCL(RACFJOB)", jcl_content)
-              print("RACF JCL written to dataset successfully")
-          except Exception as e:
-              print(f"Error writing JCL: {e}")
+          print("=== STEP 3: Submit JCL from USS file ===")
+          # Submit the USS file directly
+          res = run_tso(f"submit '/z/z89674/RACFJOB.jcl'")
+          print(f"Submit result: {res.strip()}")
 
-          print("=== STEP 4: Submit RACF batch job ===")
-          res = run_tso(f"submit '{USER}.JCL(RACFJOB)'")
-          print(res)
-
-          print("=== STEP 5: Wait for RACF job to finish ===")
+          print("=== STEP 4: Wait for RACF job to finish ===")
           time.sleep(30)
 
-          print("=== STEP 6: Submit Validation Job (CHKRACF1) ===")
+          print("=== STEP 5: Submit Validation Job (CHKRACF1) ===")
           res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKRACF1)'")
           print(res)
-
+          
           print("=== RACF1 Automation Complete ===")
           PYEOF
 
