@@ -38,9 +38,9 @@ jobs:
           run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
 
           print("=== STEP 3: Write RACF JCL to dataset using datasets.write() ===")
-          # Use a list of strings to avoid YAML indentation issues
+          # Use a simpler JOB statement format
           jcl_lines = [
-              "//RACFJOB JOB ,NOTIFY=&SYSUID,CLASS=7",
+              "//RACFJOB JOB (1),'RACF',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID",
               "//STEP1 EXEC PGM=IKJEFT01",
               "//SYSTSPRT DD SYSOUT=*",
               "//SYSTSIN DD *",
@@ -48,7 +48,6 @@ jobs:
               f"PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)",
               "/*"
           ]
-          # Join the lines with newlines
           jcl_content = "\n".join(jcl_lines)
 
           try:
