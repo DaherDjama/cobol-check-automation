@@ -1,0 +1,132 @@
+name: REXX3 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rexx3-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get install -y sshpass
+
+      - name: Create Python script locally
+        run: |
+          cat > rexx3.py << 'PYEOF'
+          import subprocess
+          import time
+          from zoautil_py import datasets, jobs
+
+          def run_tso(cmd):
+              full_cmd = f'tso "{cmd}"'
+              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              return res.stdout + res.stderr
+
+          USER = "Z89674"
+          SOURCE_DS = f"{USER}.SOURCE"
+          PANELS_DS = f"{USER}.PANELS"
+
+          print("=== STEP 1: Prepare Datasets ===")
+          # Prepare PANELS dataset
+          try: datasets.delete(PANELS_DS)
+          except: pass
+          run_tso(f"ALLOCATE DSNAME('{PANELS_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(5,5) TRACKS")
+          print("PANELS dataset ready")
+
+          # Prepare SOURCE dataset (ensure it exists)
+          try: datasets.delete(SOURCE_DS)
+          except: pass
+          run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print("SOURCE dataset ready")
+
+          print("=== STEP 2: Copy Required Members ===")
+          # Copy the ISPF Panel
+          try:
+              datasets.copy("ZXP.PUBLIC.SOURCE(DASHPNL)", f"{PANELS_DS}(DASHPNL)")
+              print("Copied DASHPNL to PANELS")
+          except Exception as e:
+              print(f"Error copying DASHPNL: {e}")
+
+          # Copy the REXX Skeleton
+          try:
+              datasets.copy("ZXP.PUBLIC.SOURCE(REXX3)", f"{SOURCE_DS}(REXX3)")
+              print("Copied REXX3 skeleton to SOURCE")
+          except Exception as e:
+              print(f"Error copying REXX3: {e}")
+
+          print("=== STEP 3: Modify REXX3 Script (Fill Blanks & Add #CRE) ===")
+          try:
+              content = datasets.read(f"{SOURCE_DS}(REXX3)")
+              lines = content.split('\n')
+              
+              # We will rebuild the script line by line to inject logic
+              new_lines = []
+              cre_initialized = False
+              
+              for line in lines:
+                  upper_line = line.upper()
+                  
+                  # --- ATTEMPT TO FILL BLANKS ---
+                  # Look for common blank placeholders
+                  if 'BLANK' in upper_line or '<<' in line:
+                      if 'ISPEXEC' in upper_line or 'ADDRESS' in upper_line:
+                          line = "ADDRESS ISPEXEC"
+                      elif 'LIBDEF' in upper_line or 'PANEL' in upper_line:
+                          line = f'"LIBDEF ISPPLIB DATASET ID(\'{USER}.PANELS\')"'
+                      elif 'DISPLAY' in upper_line:
+                          line = '"DISPLAY PANEL(DASHPNL)"'
+                      elif 'RC' in upper_line or 'LEAVE' in upper_line:
+                          line = "IF RC = 8 THEN LEAVE"
+                      elif 'TSO' in upper_line:
+                          line = "ADDRESS TSO"
+                      else:
+                          # If we don't know the blank, keep it but log it
+                          print(f"Unknown blank found: {line}")
+
+                  # --- INJECT #CRE LOGIC (The Solo Mission) ---
+                  # 1. Initialization at the top
+                  if not cre_initialized and ('ADDRESS' in upper_line or 'USERID' in upper_line):
+                      new_lines.append("#CRE = 'UNKNOWN'")
+                      cre_initialized = True
+
+                  # 2. LISTDSI Success Mapping
+                  if 'LISTDSI' in upper_line or 'SYSLRECL' in upper_line:
+                      new_lines.append(line)
+                      # Inject right after LISTDSI variables are set
+                      if 'SYSLRECL' in upper_line: 
+                          new_lines.append("#CRE = SYSCREATE")
+                      continue # Skip the default append below
+
+                  # 3. Error Block Default
+                  if 'ELSE DO' in upper_line or 'ELSE' in upper_line:
+                      new_lines.append(line)
+                      new_lines.append("#CRE = 'ERROR'")
+                      continue
+
+                  new_lines.append(line)
+
+              final_content = '\n'.join(new_lines)
+              datasets.write(f"{SOURCE_DS}(REXX3)", final_content)
+              print("REXX3 script modified and saved")
+              
+          except Exception as e:
+              print(f"Error modifying REXX3: {e}")
+
+          print("=== STEP 4: Submit Validation ===")
+          time.sleep(5)
+          try:
+              val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKREXX3)")
+              print(f"Validation job submitted: {val_job.job_id}")
+          except Exception as e:
+              print(f"Validation submit error: {e}")
+              
+          print("=== REXX3 Complete ===")
+          PYEOF
+
+      - name: Copy script to remote
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no rexx3.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/rexx3.py
+
+      - name: Execute automation script
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/rexx3.py"
