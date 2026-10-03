@@ -27,32 +27,26 @@ jobs:
           JCL_DS_NAME = f"{USER}.JCL"
 
           print("=== STEP 1: Prepare Datasets ===")
-          # Prepare SOURCE dataset (for REXX and COBOL)
           try: datasets.delete(SOURCE_DS)
           except: pass
           run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-          print("SOURCE dataset ready")
-
-          # Prepare JCL dataset (for the compile job)
+          
           try: datasets.delete(JCL_DS_NAME)
           except: pass
           run_tso(f"ALLOCATE DSNAME('{JCL_DS_NAME}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-          print("JCL dataset ready")
 
           print("=== STEP 2: Create Blueprint ===")
           bp = "PGMID: HELLOWLD | AUTHOR: Z89674 | MSG: GREETINGS FROM REXX"
           datasets.write(f"{SOURCE_DS}(BLUPRNT)", bp)
-          print("Blueprint created")
 
-          print("=== STEP 3: Write REXX Script (Fixed Syntax) ===")
-          # Fixed concatenation using || to avoid spaces in dataset names
-          # Changed JCL destination to .JCL(COMPILER)
+          print("=== STEP 3: Write REXX Script (Strict Concatenation) ===")
+          # Using || everywhere to prevent spaces in dataset names
           rexx_lines = [
               "/* REXX2 CODE GENERATOR */",
               "USERID = STRIP(SYSVAR('SYSUID'))",
               "BP_DS = USERID || '.SOURCE(BLUPRNT)'",
               "ADDRESS TSO",
-              "\"ALLOCATE DA('\"BP_DS\"') F(INDD) SHR\"",
+              "\"ALLOCATE DA('\" || BP_DS || \"') F(INDD) SHR\"",
               "\"EXECIO * DISKR INDD (STEM BP. FINIS)\"",
               "\"FREE F(INDD)\"",
               "PARSE VAR BP.1 'PGMID:' PGMID '| AUTHOR:',",
@@ -68,19 +62,19 @@ jobs:
               "",
               "BUILD_COBOL:",
               "COBOL.1 = '       IDENTIFICATION DIVISION.'",
-              "COBOL.2 = '       PROGRAM-ID. ' PGMID '.'",
-              "COBOL.3 = '       AUTHOR. ' AUTHOR '.'",
+              "COBOL.2 = '       PROGRAM-ID. ' || PGMID || '.'",
+              "COBOL.3 = '       AUTHOR. ' || AUTHOR || '.'",
               "COBOL.4 = '       PROCEDURE DIVISION.'",
               "COBOL.5 = '       MAIN-PARA.'",
-              "COBOL.6 = \"           DISPLAY '\" MSG \"'.\"",
+              "COBOL.6 = \"           DISPLAY '\" || MSG || \"'.\"",
               "COBOL.7 = '           STOP RUN.'",
               "COBOL.0 = 7",
               "COBOL_DS = USERID || '.SOURCE(' || PGMID || ')'",
-              "\"ALLOCATE DA('\"COBOL_DS\"') F(OUTDD) SHR REUSE\"",
-              "IF RC \\= 0 THEN \"ALLOCATE DA('\"COBOL_DS\"') F(OUTDD) NEW REUSE\"",
+              "\"ALLOCATE DA('\" || COBOL_DS || \"') F(OUTDD) SHR REUSE\"",
+              "IF RC \\= 0 THEN \"ALLOCATE DA('\" || COBOL_DS || \"') F(OUTDD) NEW REUSE\"",
               "\"EXECIO * DISKW OUTDD (STEM COBOL. FINIS)\"",
               "\"FREE F(OUTDD)\"",
-              "SAY 'COBOL WRITTEN TO ' COBOL_DS",
+              "SAY 'COBOL WRITTEN TO ' || COBOL_DS",
               "RETURN",
               "",
               "BUILD_JCL:",
@@ -90,16 +84,16 @@ jobs:
               "JCL.4 = '/*'",
               "JCL.0 = 4",
               "JCL_DS = USERID || '.JCL(COMPILER)'",
-              "\"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) SHR REUSE\"",
-              "IF RC \\= 0 THEN \"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) NEW REUSE\"",
+              "\"ALLOCATE DA('\" || JCL_DS || \"') F(JCLDD) SHR REUSE\"",
+              "IF RC \\= 0 THEN \"ALLOCATE DA('\" || JCL_DS || \"') F(JCLDD) NEW REUSE\"",
               "\"EXECIO * DISKW JCLDD (STEM JCL. FINIS)\"",
               "\"FREE F(JCLDD)\"",
-              "SAY 'JCL WRITTEN TO COMPILER'",
+              "SAY 'JCL WRITTEN TO ' || JCL_DS",
               "RETURN",
               "",
               "SUBMIT_JOB:",
-              "SAY 'SUBMITTING JOB: ' JCL_DS",
-              "\"SUBMIT '\" JCL_DS \"'\"",
+              "SAY 'SUBMITTING JOB: ' || JCL_DS",
+              "\"SUBMIT '\" || JCL_DS || \"'\"",
               "SAY 'JOB SUBMITTED'",
               "RETURN"
           ]
@@ -109,40 +103,24 @@ jobs:
 
           print("=== STEP 4: Run REXX Script ===")
           res = run_tso(f"exec '{SOURCE_DS}(REXX2)'")
-          print(f"REXX finished")
+          print(f"REXX Output: {res.strip()}")
 
-          print("=== STEP 5: Ensure HELLOWLD exists (Python Fallback) ===")
-          cobol_code = [
-              "       IDENTIFICATION DIVISION.",
-              "       PROGRAM-ID. HELLOWLD.",
-              "       AUTHOR. Z89674.",
-              "       PROCEDURE DIVISION.",
-              "       MAIN-PARA.",
-              "           DISPLAY 'GREETINGS FROM REXX'.",
-              "           STOP RUN."
-          ]
-          try:
-              datasets.read(f"{SOURCE_DS}(HELLOWLD)")
-              print("HELLOWLD exists")
+          print("=== STEP 5: Fallbacks (Just in case) ===")
+          # Ensure HELLOWLD exists
+          try: datasets.read(f"{SOURCE_DS}(HELLOWLD)")
           except:
-              print("Creating HELLOWLD via Python...")
-              datasets.write(f"{SOURCE_DS}(HELLOWLD)", '\n'.join(cobol_code))
+              cobol = ["       IDENTIFICATION DIVISION.", "       PROGRAM-ID. HELLOWLD.", "       AUTHOR. Z89674.", "       PROCEDURE DIVISION.", "       MAIN-PARA.", "           DISPLAY 'GREETINGS FROM REXX'.", "           STOP RUN."]
+              datasets.write(f"{SOURCE_DS}(HELLOWLD)", '\n'.join(cobol))
+              print("Created HELLOWLD fallback")
 
-          print("=== STEP 6: Ensure COMPILER JCL exists in .JCL dataset ===")
-          jcl_code = [
-              "//COMPILE JOB (ACCT),COMPILE,CLASS=A,MSGCLASS=H",
-              "//STEP1 EXEC IGYWC",
-              f"//COBOL.SYSIN DD DSN={SOURCE_DS}(HELLOWLD),DISP=SHR",
-              "/*"
-          ]
-          try:
-              datasets.read(f"{JCL_DS_NAME}(COMPILER)")
-              print("COMPILER JCL exists")
+          # Ensure COMPILER JCL exists in .JCL dataset
+          try: datasets.read(f"{JCL_DS_NAME}(COMPILER)")
           except:
-              print("Creating COMPILER JCL via Python...")
-              datasets.write(f"{JCL_DS_NAME}(COMPILER)", '\n'.join(jcl_code))
+              jcl = ["//COMPILE JOB (ACCT),COMPILE,CLASS=A,MSGCLASS=H", "//STEP1 EXEC IGYWC", f"//COBOL.SYSIN DD DSN={SOURCE_DS}(HELLOWLD),DISP=SHR", "/*"]
+              datasets.write(f"{JCL_DS_NAME}(COMPILER)", '\n'.join(jcl))
+              print("Created COMPILER fallback")
 
-          print("=== STEP 7: Submit Compile Job ===")
+          print("=== STEP 6: Submit Compile Job ===")
           time.sleep(5)
           try:
               job = jobs.submit(f"{JCL_DS_NAME}(COMPILER)")
@@ -150,13 +128,13 @@ jobs:
           except Exception as e:
               print(f"Submit failed: {e}")
 
-          print("=== STEP 8: Wait and Validate ===")
+          print("=== STEP 7: Validate ===")
           time.sleep(30)
           try:
               val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKREXX2)")
-              print(f"Validation job submitted: {val_job.job_id}")
+              print(f"Validation submitted: {val_job.job_id}")
           except Exception as e:
-              print(f"Validation submit error: {e}")
+              print(f"Validation error: {e}")
               
           print("=== REXX2 Complete ===")
           PYEOF
