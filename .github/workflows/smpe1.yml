@@ -17,7 +17,13 @@ jobs:
           import time
           from zoautil_py import datasets
 
+          def run_cmd(cmd):
+              """Run command without tso wrapper"""
+              res = subprocess.run(cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              return res.stdout + res.stderr
+
           def run_tso(cmd):
+              """Run TSO command"""
               full_cmd = f'tso "{cmd}"'
               res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
@@ -27,31 +33,52 @@ jobs:
           DST = f"{USER}.JCL(GIMSAMPU)"
 
           print("=== STEP 1: Prepare Dataset ===")
+          # Delete just the member, not the whole dataset
           try:
               datasets.delete(DST)
+              print("Deleted old member")
           except:
               pass
-          
-          res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-          print(f"Allocate: {res.strip()}")
 
-          print("=== STEP 2: Copy Source WITHOUT EDITS ===")
+          print("=== STEP 2: Copy Source ===")
           try:
               datasets.copy(SRC, DST)
               print("Copy successful")
           except Exception as e:
               print(f"Copy error: {e}")
 
-          print("=== STEP 3: Submit UNEDITED GIMSAMPU ===")
-          res = run_tso(f"SUBMIT '{DST}'")
-          print(f"Submit result: {res.strip()}")
+          print("=== STEP 3: Try Multiple Submit Methods ===")
           
-          time.sleep(30)
+          # Method 1: Direct submit without tso wrapper
+          print("--- Method 1: Direct submit ---")
+          res1 = run_cmd(f"submit '{DST}'")
+          print(f"Result: {res1.strip()}")
+          
+          time.sleep(5)
+          
+          # Method 2: TSO wrapper
+          print("--- Method 2: TSO wrapper ---")
+          res2 = run_tso(f"submit '{DST}'")
+          print(f"Result: {res2.strip()}")
+          
+          time.sleep(5)
+          
+          # Method 3: Try zoautil_py jobs module
+          print("--- Method 3: zoautil_py jobs ---")
+          try:
+              from zoautil_py import jobs
+              job_id = jobs.submit(DST)
+              print(f"Job submitted: {job_id}")
+          except Exception as e:
+              print(f"Jobs module error: {e}")
 
-          print("=== STEP 4: Check Job Output ===")
-          # Try to read the job output using jls and jcat
-          jls_out = run_tso("jls")
-          print(f"JLS output: {jls_out.strip()}")
+          print("=== STEP 4: Check if jobs ran ===")
+          time.sleep(30)
+          
+          # Try to list jobs
+          print("--- Job listing ---")
+          res = run_cmd("ls /u/z89674/*.jcl 2>/dev/null || echo 'No JCL files found'")
+          print(res.strip())
           
           print("=== Done ===")
           PYEOF
