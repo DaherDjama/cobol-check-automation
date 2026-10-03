@@ -26,53 +26,51 @@ jobs:
           SOURCE_DS = f"{USER}.SOURCE"
           PANELS_DS = f"{USER}.PANELS"
 
-          print("=== STEP 1: Prepare Datasets (LRECL=32760) ===")
-          try: datasets.delete(PANELS_DS)
-          except: pass
-          res = run_tso(f"ALLOCATE DSNAME('{PANELS_DS}') DSORG(PO) RECFM(F,B) LRECL(32760) SPACE(5,5) TRACKS")
-          print(f"Allocated PANELS: {res.strip()}")
+          print("=== STEP 1: Prepare Datasets (Max LRECL, Variable Format) ===")
+          # Allocate with LRECL=32760 and RECFM=V,B to handle any line length
+          for ds in [PANELS_DS, SOURCE_DS]:
+              try: datasets.delete(ds)
+              except: pass
+              res = run_tso(f"ALLOCATE DSNAME('{ds}') DSORG(PO) RECFM(V,B) LRECL(32760) SPACE(5,5) TRACKS")
+              print(f"Allocated {ds}: {res.strip()}")
 
-          try: datasets.delete(SOURCE_DS)
-          except: pass
-          res = run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(32760) SPACE(1,1) TRACKS")
-          print(f"Allocated SOURCE: {res.strip()}")
-
-          print("=== STEP 2: Copy Members ===")
-          # Try TSO COPY first
-          res = run_tso(f"copy 'ZXP.PUBLIC.SOURCE(DASHPNL)' '{PANELS_DS}(DASHPNL)'")
-          print(f"Copy DASHPNL via TSO: {res.strip()}")
+          print("=== STEP 2: Copy Members (Robust Method) ===")
           
-          res = run_tso(f"copy 'ZXP.PUBLIC.SOURCE(REXX3)' '{SOURCE_DS}(REXX3)'")
-          print(f"Copy REXX3 via TSO: {res.strip()}")
+          def safe_copy(src, dst):
+              try:
+                  datasets.copy(src, dst)
+                  print(f"Successfully copied {src} to {dst}")
+              except Exception as e:
+                  print(f"zoautil_py copy failed for {src}: {e}")
+                  print("Attempting manual read/write copy...")
+                  try:
+                      content = datasets.read(src)
+                      # Handle blob: if no newlines, split every 80 chars
+                      if '\n' not in content and len(content) > 80:
+                          lines = [content[i:i+80] for i in range(0, len(content), 80)]
+                          content = '\n'.join(lines)
+                          print("Split source blob into 80-char lines")
+                      datasets.write(dst, content)
+                      print(f"Manual copy successful for {dst}")
+                  except Exception as e2:
+                      print(f"Manual copy also failed: {e2}")
 
-          # If TSO COPY failed, try zoautil_py
-          if 'FOMF0136I' in res or 'not found' in res.lower():
-              print("TSO COPY failed, trying zoautil_py...")
-              try:
-                  datasets.copy("ZXP.PUBLIC.SOURCE(DASHPNL)", f"{PANELS_DS}(DASHPNL)")
-                  print("Copied DASHPNL via zoautil_py")
-              except Exception as e:
-                  print(f"Error copying DASHPNL: {e}")
-              
-              try:
-                  datasets.copy("ZXP.PUBLIC.SOURCE(REXX3)", f"{SOURCE_DS}(REXX3)")
-                  print("Copied REXX3 via zoautil_py")
-              except Exception as e:
-                  print(f"Error copying REXX3: {e}")
+          safe_copy("ZXP.PUBLIC.SOURCE(DASHPNL)", f"{PANELS_DS}(DASHPNL)")
+          safe_copy("ZXP.PUBLIC.SOURCE(REXX3)", f"{SOURCE_DS}(REXX3)")
 
           print("=== STEP 3: Modify REXX3 Script ===")
           try:
               content = datasets.read(f"{SOURCE_DS}(REXX3)")
               print(f"Read {len(content)} chars")
               
-              # Handle blob: if no newlines, split every 80 chars
+              # Handle blob again just in case
               if '\n' not in content and len(content) > 80:
                   lines = [content[i:i+80] for i in range(0, len(content), 80)]
                   content = '\n'.join(lines)
-                  print("Split blob into lines")
+                  print("Split REXX3 blob into lines")
               else:
                   lines = content.split('\n')
-              
+
               new_lines = []
               for line in lines:
                   upper_line = line.upper()
@@ -94,17 +92,22 @@ jobs:
 
                   new_lines.append(line)
                   
-                  # Inject #CRE Logic
+                  # Inject #CRE Logic (The Solo Mission)
+                  # A. Initialization: Add after LIBDEF
                   if "LIBDEF" in upper_line:
                       new_lines.append("#CRE = 'UNKNOWN'")
+                  
+                  # B. Success Mapping: Add after SYSRECFM assignment
                   if "SYSRECFM" in line and "=" in line:
                       new_lines.append("#CRE = SYSCREATE")
+                  
+                  # C. Error Default: Add after ELSE DO
                   if "ELSE DO" in upper_line:
                       new_lines.append("#CRE = 'ERROR'")
 
               final_content = '\n'.join(new_lines)
               datasets.write(f"{SOURCE_DS}(REXX3)", final_content)
-              print("REXX3 script modified and saved")
+              print("REXX3 script modified and saved successfully")
               
           except Exception as e:
               print(f"Error modifying REXX3: {e}")
