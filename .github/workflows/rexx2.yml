@@ -1,3 +1,4 @@
+
 name: REXX2 Challenge Automation
 
 on:
@@ -32,7 +33,6 @@ jobs:
           except:
               pass
           
-          # LRECL=80 is required for COBOL source
           res = run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
           print(f"Allocate: {res.strip()}")
 
@@ -41,7 +41,8 @@ jobs:
           datasets.write(f"{SOURCE_DS}(BLUPRNT)", bp)
           print("Blueprint created")
 
-          print("=== STEP 3: Write REXX Script (Short lines for LRECL=80) ===")
+          print("=== STEP 3: Write REXX Script ===")
+          # Fixed member names to be <= 8 chars
           rexx_lines = [
               "/* REXX2 CODE GENERATOR */",
               "USERID = STRIP(SYSVAR('SYSUID'))",
@@ -55,6 +56,7 @@ jobs:
               "PGMID = STRIP(PGMID)",
               "AUTHOR = STRIP(AUTHOR)",
               "MSG = STRIP(MSG)",
+              "SAY 'PGMID IS: ' PGMID",
               "COBOL.1 = '       IDENTIFICATION DIVISION.'",
               "COBOL.2 = '       PROGRAM-ID. ' PGMID '.'",
               "COBOL.3 = '       AUTHOR. ' AUTHOR '.'",
@@ -68,18 +70,19 @@ jobs:
               "IF RC \\= 0 THEN \"ALLOCATE DA('\"COBOL_DS\"') F(OUTDD) NEW REUSE\"",
               "\"EXECIO * DISKW OUTDD (STEM COBOL. FINIS)\"",
               "\"FREE F(OUTDD)\"",
-              "JCL.1 = '//' PGMID 'C JOB (ACCT),COMPILE,CLASS=A'",
+              "SAY 'COBOL WRITTEN'",
+              "JCL.1 = '//COMPILE JOB (ACCT),COMPILE,CLASS=A'",
               "JCL.2 = '//STEP1 EXEC IGYWC'",
               "JCL.3 = '//COBOL.SYSIN DD DSN=' USERID '.SOURCE(' PGMID ')'",
               "JCL.3 = JCL.3 ',DISP=SHR'",
               "JCL.4 = '/*'",
               "JCL.0 = 4",
-              "JCL_DS = USERID || '.SOURCE(' PGMID 'J)'",
+              "JCL_DS = USERID || '.SOURCE(COMPILEJ)'",
               "\"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) SHR REUSE\"",
               "IF RC \\= 0 THEN \"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) NEW REUSE\"",
               "\"EXECIO * DISKW JCLDD (STEM JCL. FINIS)\"",
               "\"FREE F(JCLDD)\"",
-              "SAY 'REXX SCRIPT COMPLETED SUCCESSFULLY'"
+              "SAY 'JCL WRITTEN TO COMPILEJ'"
           ]
           
           datasets.write(f"{SOURCE_DS}(REXX2)", '\n'.join(rexx_lines))
@@ -87,20 +90,18 @@ jobs:
 
           print("=== STEP 4: Run REXX Script ===")
           res = run_tso(f"exec '{SOURCE_DS}(REXX2)'")
-          print(f"Exec result: {res.strip()}")
+          print(f"Exec finished.")
 
           print("=== STEP 5: Submit Generated JCL (Python fallback) ===")
-          # The REXX script creates HELLOWLDJ member. We submit it via Python.
           time.sleep(5)
           try:
-              jcl_member = f"{SOURCE_DS}(HELLOWLDJ)"
-              # Verify it exists by reading a bit
+              jcl_member = f"{SOURCE_DS}(COMPILEJ)"
               content = datasets.read(jcl_member)
-              print(f"JCL Member found. Submitting...")
+              print(f"JCL Member COMPILEJ found. Submitting...")
               job = jobs.submit(jcl_member)
               print(f"Submitted compile job: {job.job_id}")
           except Exception as e:
-              print(f"Submit failed: {e}. The REXX script might have failed to create JCL.")
+              print(f"Submit failed: {e}")
 
           print("=== STEP 6: Wait and Validate ===")
           time.sleep(30)
