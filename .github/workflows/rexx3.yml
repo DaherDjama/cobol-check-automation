@@ -26,79 +26,79 @@ jobs:
           SOURCE_DS = f"{USER}.SOURCE"
           PANELS_DS = f"{USER}.PANELS"
 
-          print("=== STEP 1: Prepare Datasets (LRECL=256 for long lines) ===")
-          # Prepare PANELS dataset with larger LRECL
+          print("=== STEP 1: Prepare Datasets (LRECL=32760) ===")
           try: datasets.delete(PANELS_DS)
           except: pass
-          res = run_tso(f"ALLOCATE DSNAME('{PANELS_DS}') DSORG(PO) RECFM(F,B) LRECL(256) SPACE(5,5) TRACKS")
+          res = run_tso(f"ALLOCATE DSNAME('{PANELS_DS}') DSORG(PO) RECFM(F,B) LRECL(32760) SPACE(5,5) TRACKS")
           print(f"Allocated PANELS: {res.strip()}")
 
-          # Prepare SOURCE dataset with larger LRECL
           try: datasets.delete(SOURCE_DS)
           except: pass
-          res = run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(256) SPACE(1,1) TRACKS")
+          res = run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(32760) SPACE(1,1) TRACKS")
           print(f"Allocated SOURCE: {res.strip()}")
 
-          print("=== STEP 2: Copy Members using zoautil_py ===")
-          # Copy DASHPNL
-          try:
-              datasets.copy("ZXP.PUBLIC.SOURCE(DASHPNL)", f"{PANELS_DS}(DASHPNL)")
-              print("Copied DASHPNL to PANELS")
-          except Exception as e:
-              print(f"Error copying DASHPNL: {e}")
+          print("=== STEP 2: Copy Members ===")
+          # Try TSO COPY first
+          res = run_tso(f"copy 'ZXP.PUBLIC.SOURCE(DASHPNL)' '{PANELS_DS}(DASHPNL)'")
+          print(f"Copy DASHPNL via TSO: {res.strip()}")
+          
+          res = run_tso(f"copy 'ZXP.PUBLIC.SOURCE(REXX3)' '{SOURCE_DS}(REXX3)'")
+          print(f"Copy REXX3 via TSO: {res.strip()}")
 
-          # Copy REXX3
-          try:
-              datasets.copy("ZXP.PUBLIC.SOURCE(REXX3)", f"{SOURCE_DS}(REXX3)")
-              print("Copied REXX3 to SOURCE")
-          except Exception as e:
-              print(f"Error copying REXX3: {e}")
+          # If TSO COPY failed, try zoautil_py
+          if 'FOMF0136I' in res or 'not found' in res.lower():
+              print("TSO COPY failed, trying zoautil_py...")
+              try:
+                  datasets.copy("ZXP.PUBLIC.SOURCE(DASHPNL)", f"{PANELS_DS}(DASHPNL)")
+                  print("Copied DASHPNL via zoautil_py")
+              except Exception as e:
+                  print(f"Error copying DASHPNL: {e}")
+              
+              try:
+                  datasets.copy("ZXP.PUBLIC.SOURCE(REXX3)", f"{SOURCE_DS}(REXX3)")
+                  print("Copied REXX3 via zoautil_py")
+              except Exception as e:
+                  print(f"Error copying REXX3: {e}")
 
           print("=== STEP 3: Modify REXX3 Script ===")
           try:
               content = datasets.read(f"{SOURCE_DS}(REXX3)")
-              lines = content.split('\n')
-              new_lines = []
+              print(f"Read {len(content)} chars")
               
+              # Handle blob: if no newlines, split every 80 chars
+              if '\n' not in content and len(content) > 80:
+                  lines = [content[i:i+80] for i in range(0, len(content), 80)]
+                  content = '\n'.join(lines)
+                  print("Split blob into lines")
+              else:
+                  lines = content.split('\n')
+              
+              new_lines = []
               for line in lines:
                   upper_line = line.upper()
                   
-                  # 1. Replace Z##### with actual User ID
+                  # Replace Z##### with actual User ID
                   line = line.replace("Z#####", USER)
 
-                  # 2. Fill the 5 Blanks
-                  # Blank 1: Display the panel. The line is likely "<< BLANK 1 >>" inside quotes.
+                  # Fill the 5 Blanks
                   if "<< BLANK 1 >>" in line:
                       line = line.replace("<< BLANK 1 >>", "DISPLAY PANEL(DASHPNL)")
-                  
-                  # Blank 2: Exit loop on F3 (RC=8)
                   elif "BLANK 2" in upper_line:
                       line = "IF RC = 8 THEN LEAVE"
-                  
-                  # Blank 3: LISTDSI function
                   elif "<< BLANK 3 >>" in line:
                       line = line.replace("<< BLANK 3 >>", "LISTDSI")
-                  
-                  # Blank 4: SYSDSORG variable
                   elif "<< BLANK 4 >>" in line:
                       line = line.replace("<< BLANK 4 >>", "SYSDSORG")
-                  
-                  # Blank 5: SYSRECFM variable
                   elif "<< BLANK 5 >>" in line:
                       line = line.replace("<< BLANK 5 >>", "SYSRECFM")
 
-                  # 3. Inject #CRE Logic (The Solo Mission)
                   new_lines.append(line)
                   
-                  # A. Initialization: Add after LIBDEF
+                  # Inject #CRE Logic
                   if "LIBDEF" in upper_line:
                       new_lines.append("#CRE = 'UNKNOWN'")
-                  
-                  # B. Success Mapping: Add after SYSRECFM assignment
                   if "SYSRECFM" in line and "=" in line:
                       new_lines.append("#CRE = SYSCREATE")
-                  
-                  # C. Error Default: Add after ELSE DO
                   if "ELSE DO" in upper_line:
                       new_lines.append("#CRE = 'ERROR'")
 
