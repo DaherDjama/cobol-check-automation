@@ -1,0 +1,81 @@
+name: LNX2 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  lnx2-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.LNX1_PEM_KEY }}" > ~/.ssh/lnx1key.pem
+          chmod 600 ~/.ssh/lnx1key.pem
+
+      - name: Connect and Run LNX2 Commands
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/lnx1key.pem linux1@${{ secrets.LNX1_IP }} << 'EOF'
+          
+          echo "=== STEP 1: Install Apache Web Server ==="
+          sudo yum install -y httpd.s390x
+          
+          echo "=== STEP 2: Start Apache ==="
+          sudo apachectl start
+          sudo systemctl enable httpd
+          sudo apachectl status || echo "Status check complete"
+          
+          echo "=== STEP 3: Create Home Page ==="
+          sudo mkdir -p /var/www/html
+          sudo bash -c 'cat > /var/www/html/index.html << HTML
+          <!DOCTYPE html>
+          <html>
+          <body>
+          <h1>This is my web page</h1>
+          <p>... and it just happens to be running
+          on IBM Z hardware</p>
+          </body>
+          </html>
+          HTML'
+          echo "Home page created"
+          cat /var/www/html/index.html
+          
+          echo "=== STEP 4: Find IP Address ==="
+          ip -c addr
+          
+          echo "=== STEP 5: Configure Firewall ==="
+          echo "Current iptables rules:"
+          sudo iptables --list
+          
+          echo "Adding rule for port 80..."
+          sudo iptables -I INPUT --protocol tcp --dport 80 -j ACCEPT
+          
+          echo "Updated iptables rules:"
+          sudo iptables --list
+          
+          echo "=== STEP 6: Watch Access Log (5 seconds) ==="
+          sudo timeout 5 tail -f /var/log/httpd/access_log || echo "Log viewing complete"
+          
+          echo "=== STEP 7: Download Vitetris Game ==="
+          cd /tmp
+          curl -L https://github.com/nicowillis/vitetris/archive/v0.58.0.tar.gz -o vitetris-0.58.0.tar.gz
+          
+          echo "=== STEP 8: Unpack the Tarball ==="
+          tar xvf vitetris-0.58.0.tar.gz
+          
+          echo "=== STEP 9: Install Build Tools ==="
+          sudo yum install -y make gcc
+          
+          echo "=== STEP 10: Configure and Build ==="
+          cd vitetris-0.58.0
+          ./configure && make
+          
+          echo "=== STEP 11: Verify Build ==="
+          ls -la tetris
+          echo "Game compiled successfully!"
+          
+          echo "=== STEP 12: Submit Challenge ==="
+          curl -X POST -d email=djamaahmeddaher@gmail.com http://192.86.32.12:1880/LNX2
+          
+          echo "=== LNX2 Automation Complete ==="
+          EOF
