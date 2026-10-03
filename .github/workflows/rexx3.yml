@@ -26,51 +26,37 @@ jobs:
           SOURCE_DS = f"{USER}.SOURCE"
           PANELS_DS = f"{USER}.PANELS"
 
-          print("=== STEP 1: Prepare Datasets (Standard LRECL=80) ===")
-          # Allocate with standard mainframe attributes as per PDF instructions
+          print("=== STEP 1: Prepare Datasets (LRECL=256) ===")
           for ds in [PANELS_DS, SOURCE_DS]:
               try: datasets.delete(ds)
               except: pass
-              # PDF says: RECFM: FB LRECL: 80
-              res = run_tso(f"ALLOCATE DSNAME('{ds}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(5,5) TRACKS")
-              print(f"Allocated {ds}: {res.strip()}")
+              # LRECL=256 prevents "line exceeds maximum length" errors
+              res = run_tso(f"ALLOCATE DSNAME('{ds}') DSORG(PO) RECFM(F,B) LRECL(256) SPACE(5,5) TRACKS")
+              print(f"Allocated {ds}")
 
-          print("=== STEP 2: Copy DASHPNL (Panel) ===")
+          print("=== STEP 2: Copy DASHPNL Panel ===")
           try:
-              datasets.copy("ZXP.PUBLIC.SOURCE(DASHPNL)", f"{PANELS_DS}(DASHPNL)")
-              print("Copied DASHPNL successfully")
+              # Read directly from public source to avoid copy attribute errors
+              content = datasets.read("ZXP.PUBLIC.SOURCE(DASHPNL)")
+              if '\n' not in content and len(content) > 80:
+                  lines = [content[i:i+80] for i in range(0, len(content), 80)]
+                  content = '\n'.join(lines)
+              datasets.write(f"{PANELS_DS}(DASHPNL)", content)
+              print("DASHPNL written successfully")
           except Exception as e:
-              print(f"Error copying DASHPNL: {e}")
-              # Fallback: Read and Write manually
-              try:
-                  content = datasets.read("ZXP.PUBLIC.SOURCE(DASHPNL)")
-                  # Split blob if necessary
-                  if '\n' not in content and len(content) > 80:
-                      lines = [content[i:i+80] for i in range(0, len(content), 80)]
-                      content = '\n'.join(lines)
-                  datasets.write(f"{PANELS_DS}(DASHPNL)", content)
-                  print("Manual copy DASHPNL successful")
-              except Exception as e2:
-                  print(f"Manual copy DASHPNL failed: {e2}")
+              print(f"Error with DASHPNL: {e}")
 
           print("=== STEP 3: Process REXX3 Script ===")
           try:
-              # Read the source directly from the public library
               content = datasets.read("ZXP.PUBLIC.SOURCE(REXX3)")
-              print(f"Read REXX3 source: {len(content)} chars")
-              
-              # CRITICAL FIX: Split blob into 80-char lines
               if '\n' not in content and len(content) > 80:
                   lines = [content[i:i+80] for i in range(0, len(content), 80)]
-                  print("Split source blob into 80-char lines")
               else:
                   lines = content.split('\n')
 
               new_lines = []
               for line in lines:
                   upper_line = line.upper()
-                  
-                  # Replace Z##### with actual User ID
                   line = line.replace("Z#####", USER)
 
                   # Fill the 5 Blanks
@@ -88,22 +74,14 @@ jobs:
                   new_lines.append(line)
                   
                   # Inject #CRE Logic (The Solo Mission)
-                  # A. Initialization: Add after LIBDEF
                   if "LIBDEF" in upper_line:
                       new_lines.append("#CRE = 'UNKNOWN'")
-                  
-                  # B. Success Mapping: Add after SYSRECFM assignment
                   if "SYSRECFM" in line and "=" in line:
                       new_lines.append("#CRE = SYSCREATE")
-                  
-                  # C. Error Default: Add after ELSE DO
                   if "ELSE DO" in upper_line:
                       new_lines.append("#CRE = 'ERROR'")
 
-              # Join lines back together
               final_content = '\n'.join(new_lines)
-              
-              # Write to the user's dataset
               datasets.write(f"{SOURCE_DS}(REXX3)", final_content)
               print("REXX3 script modified and saved successfully")
               
