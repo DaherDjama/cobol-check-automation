@@ -26,14 +26,12 @@ jobs:
           SOURCE_DS = f"{USER}.SOURCE"
 
           print("=== STEP 1: Delete and Recreate SOURCE Dataset (LRECL=120) ===")
-          # Delete the whole dataset to clear old attributes
           try:
               datasets.delete(SOURCE_DS)
               print("Deleted old SOURCE dataset")
           except:
               print("Dataset didn't exist")
           
-          # Allocate with LRECL=120 to fit long REXX lines
           res = run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS")
           print(f"Allocate result: {res.strip()}")
 
@@ -46,73 +44,73 @@ jobs:
               print(f"Error creating blueprint: {e}")
 
           print("=== STEP 3: Write REXX2 Script ===")
-          # The REXX script logic
-          rexx_script = f"""/* REXX - REXX2 Code Generator */
-          USERID = SYSVAR("SYSUID")
-          BP_DS = USERID || ".SOURCE(BLUPRNT)"
-
-          /* Check existence */
-          IF SYSDSN(BP_DS) \\= 'OK' THEN DO
-              SAY 'Blueprint not found'
-              EXIT 1
-          END
-
-          /* Allocate and Read Blueprint */
-          "ALLOCATE DA('"BP_DS"') F(INDD) SHR"
-          "EXECIO * DISKR INDD (STEM BP. FINIS)"
-          "FREE F(INDD)"
-
-          /* Parse Blueprint */
-          PARSE VAR BP.1 "PGMID:" PGMID "| AUTHOR:" AUTHOR "| MSG:" MSG
-          PGMID = STRIP(PGMID)
-          AUTHOR = STRIP(AUTHOR)
-          MSG = STRIP(MSG)
-
-          SAY 'Generating COBOL for ' PGMID
-
-          /* Build COBOL Code (Fixed Format) */
-          COBOL.1 = "       IDENTIFICATION DIVISION."
-          COBOL.2 = "       PROGRAM-ID. " PGMID "."
-          COBOL.3 = "       AUTHOR. " AUTHOR "."
-          COBOL.4 = "       PROCEDURE DIVISION."
-          COBOL.5 = "       MAIN-PARA."
-          COBOL.6 = "           DISPLAY '" MSG "'."
-          COBOL.7 = "           STOP RUN."
-          COBOL.0 = 7
-
-          /* Write COBOL to Dataset */
-          COBOL_DS = USERID || ".SOURCE(" PGMID ")"
-          "ALLOCATE DA('"COBOL_DS"') F(OUTDD) SHR REUSE"
-          IF RC \\= 0 THEN DO
-              "ALLOCATE DA('"COBOL_DS"') F(OUTDD) NEW REUSE LRECL(80) RECFM(F,B) SPACE(1,1) TRACKS"
-          END
-          "EXECIO * DISKW OUTDD (STEM COBOL. FINIS)"
-          "FREE F(OUTDD)"
-          SAY 'COBOL written to ' COBOL_DS
-
-          /* Generate JCL for Compilation */
-          JCL.1 = "//" PGMID "C JOB (ACCT),'COMPILE',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID"
-          JCL.2 = "//STEP1 EXEC IGYWC"
-          JCL.3 = "//COBOL.SYSIN DD DSN=" USERID ".SOURCE(" PGMID "),DISP=SHR"
-          JCL.4 = "/*"
-          JCL.0 = 4
-
-          /* Write JCL and Submit */
-          JCL_DS = USERID || ".SOURCE(" PGMID "J)"
-          "ALLOCATE DA('"JCL_DS"') F(JCLDD) SHR REUSE"
-          IF RC \\= 0 THEN "ALLOCATE DA('"JCL_DS"') F(JCLDD) NEW REUSE LRECL(80) RECFM(F,B) SPACE(1,1) TRACKS"
-          "EXECIO * DISKW JCLDD (STEM JCL. FINIS)"
-          "FREE F(JCLDD)"
-
-          SAY 'Submitting compile job...'
-          "SUBMIT '" JCL_DS "'"
-          SAY 'Done!'
-          """
+          # Define the REXX script line by line to avoid indentation issues
+          rexx_lines = [
+              "/* REXX - REXX2 Code Generator */",
+              "USERID = STRIP(SYSVAR('SYSUID'))", 
+              "BP_DS = USERID || '.SOURCE(BLUPRNT)'",
+              "",
+              "SAY 'Checking for blueprint at: ' BP_DS",
+              "",
+              "IF SYSDSN(BP_DS) \\= 'OK' THEN DO",
+              "    SAY 'Blueprint not found'",
+              "    EXIT 1",
+              "END",
+              "",
+              "/* Allocate and Read Blueprint */",
+              "ADDRESS TSO",
+              "\"ALLOCATE DA('\"BP_DS\"') F(INDD) SHR\"",
+              "\"EXECIO * DISKR INDD (STEM BP. FINIS)\"",
+              "\"FREE F(INDD)\"",
+              "",
+              "/* Parse Blueprint */",
+              "PARSE VAR BP.1 'PGMID:' PGMID '| AUTHOR:' AUTHOR '| MSG:' MSG",
+              "PGMID = STRIP(PGMID)",
+              "AUTHOR = STRIP(AUTHOR)",
+              "MSG = STRIP(MSG)",
+              "",
+              "SAY 'Generating COBOL for ' PGMID",
+              "",
+              "/* Build COBOL Code */",
+              "COBOL.1 = '       IDENTIFICATION DIVISION.'",
+              "COBOL.2 = '       PROGRAM-ID. ' PGMID '.'",
+              "COBOL.3 = '       AUTHOR. ' AUTHOR '.'",
+              "COBOL.4 = '       PROCEDURE DIVISION.'",
+              "COBOL.5 = '       MAIN-PARA.'",
+              "COBOL.6 = '           DISPLAY ''' MSG '''.'",
+              "COBOL.7 = '           STOP RUN.'",
+              "COBOL.0 = 7",
+              "",
+              "/* Write COBOL to Dataset */",
+              "COBOL_DS = USERID || '.SOURCE(' PGMID ')'",
+              "\"ALLOCATE DA('\"COBOL_DS\"') F(OUTDD) SHR REUSE\"",
+              "IF RC \\= 0 THEN DO",
+              "    \"ALLOCATE DA('\"COBOL_DS\"') F(OUTDD) NEW REUSE LRECL(80) RECFM(F,B) SPACE(1,1) TRACKS\"",
+              "END",
+              "\"EXECIO * DISKW OUTDD (STEM COBOL. FINIS)\"",
+              "\"FREE F(OUTDD)\"",
+              "SAY 'COBOL written to ' COBOL_DS",
+              "",
+              "/* Generate JCL for Compilation */",
+              "JCL.1 = '//' PGMID 'C JOB (ACCT),''COMPILE'',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID'",
+              "JCL.2 = '//STEP1 EXEC IGYWC'",
+              "JCL.3 = '//COBOL.SYSIN DD DSN=' USERID '.SOURCE(' PGMID '),DISP=SHR'",
+              "JCL.4 = '/*'",
+              "JCL.0 = 4",
+              "",
+              "/* Write JCL and Submit */",
+              "JCL_DS = USERID || '.SOURCE(' PGMID 'J)'",
+              "\"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) SHR REUSE\"",
+              "IF RC \\= 0 THEN \"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) NEW REUSE LRECL(80) RECFM(F,B) SPACE(1,1) TRACKS\"",
+              "\"EXECIO * DISKW JCLDD (STEM JCL. FINIS)\"",
+              "\"FREE F(JCLDD)\"",
+              "",
+              "SAY 'Submitting compile job...'",
+              "\"SUBMIT '\" JCL_DS \"'\"",
+              "SAY 'Done!'"
+          ]
           
-          # Clean up indentation
-          lines = rexx_script.split('\n')
-          clean_lines = [line[10:] if line.startswith('          ') else line for line in lines]
-          final_script = '\n'.join(clean_lines)
+          final_script = '\n'.join(rexx_lines)
 
           try:
               datasets.write(f"{SOURCE_DS}(REXX2)", final_script)
