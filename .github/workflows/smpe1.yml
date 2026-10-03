@@ -15,71 +15,103 @@ jobs:
           cat > smpe1.py << 'PYEOF'
           import subprocess
           import time
-          from zoautil_py import datasets
+          import re
+          from zoautil_py import datasets, jobs
 
           def run_cmd(cmd):
-              """Run command without tso wrapper"""
               res = subprocess.run(cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
-              return res.stdout + res.stderr
-
-          def run_tso(cmd):
-              """Run TSO command"""
-              full_cmd = f'tso "{cmd}"'
-              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
           USER = "Z89674"
           SRC = "ZXP.PUBLIC.JCL(GIMSAMPU)"
           DST = f"{USER}.JCL(GIMSAMPU)"
 
-          print("=== STEP 1: Prepare Dataset ===")
-          # Delete just the member, not the whole dataset
+          print("=== STEP 1: Prepare Dataset (LRECL=120 for edits) ===")
+          # Delete old member
           try:
               datasets.delete(DST)
               print("Deleted old member")
           except:
               pass
+          
+          # Allocate with LRECL=120 to handle longer lines after edits
+          # &HLQ& (6 chars) -> &SYSUID..SMP (12 chars) adds 6 chars. 80+6=86. 120 is safe.
+          res = run_cmd(f'tso "ALLOCATE DSNAME(\'{USER}.JCL\') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS"')
+          print(f"Allocate: {res.strip()}")
 
-          print("=== STEP 2: Copy Source ===")
+          print("=== STEP 2: Read and Edit Source ===")
           try:
-              datasets.copy(SRC, DST)
-              print("Copy successful")
+              content = datasets.read(SRC)
+              print(f"Read {len(content)} chars")
+              
+              # Fix the "blob" issue: split into lines
+              if '\n' in content:
+                  lines = content.split('\n')
+              else:
+                  # If no newlines, assume 80 char fixed block
+                  lines = [content[i:i+80] for i in range(0, len(content), 80)]
+              print(f"Split into {len(lines)} lines")
+
+              edited_lines = []
+              for line in lines:
+                  # 1. Symbolics (from PDF Step 2-4)
+                  line = line.replace("&HLQ&", "&SYSUID..SMP")
+                  line = line.replace("&VOLUME&", "VPWRKA")
+                  line = line.replace("&UNIT&", "3390")
+
+                  # 2. DEFZONES Step (IDCAMS): Change CYL/CYLINDERS to TRACKS(2 1)
+                  # Look for IDCAMS DEFINE CLUSTER syntax
+                  if 'CYLINDERS(' in line or 'CYL(' in line:
+                      line = re.sub(r'CYLINDERS\(\d+\s+\d+\)', 'TRACKS(2 1)', line)
+                      line = re.sub(r'CYL\(\d+\s+\d+\)', 'TRACKS(2 1)', line)
+                  
+                  # 3. ALLOCDS Step (JCL DD): Change SPACE=(CYL,...) to SPACE=(TRK,(1,1))
+                  # Sequential: (1,1), PO: (1,1,1)
+                  # Replace 2-number space: SPACE=(CYL,(x,y)) -> SPACE=(TRK,(1,1))
+                  line = re.sub(r'SPACE=\(CYLINDERS,\(\d+,\d+\)\)', 'SPACE=(TRK,(1,1))', line)
+                  line = re.sub(r'SPACE=\(CYL,\(\d+,\d+\)\)', 'SPACE=(TRK,(1,1))', line)
+                  # Replace 3-number space: SPACE=(CYL,(x,y,z)) -> SPACE=(TRK,(1,1,1))
+                  line = re.sub(r'SPACE=\(CYLINDERS,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', line)
+                  line = re.sub(r'SPACE=\(CYL,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', line)
+
+                  edited_lines.append(line)
+                  
+              final_content = "\n".join(edited_lines)
+              
+              datasets.write(DST, final_content)
+              print("Write successful")
           except Exception as e:
-              print(f"Copy error: {e}")
+              print(f"Error: {e}")
 
-          print("=== STEP 3: Try Multiple Submit Methods ===")
-          
-          # Method 1: Direct submit without tso wrapper
-          print("--- Method 1: Direct submit ---")
-          res1 = run_cmd(f"submit '{DST}'")
-          print(f"Result: {res1.strip()}")
-          
-          time.sleep(5)
-          
-          # Method 2: TSO wrapper
-          print("--- Method 2: TSO wrapper ---")
-          res2 = run_tso(f"submit '{DST}'")
-          print(f"Result: {res2.strip()}")
-          
-          time.sleep(5)
-          
-          # Method 3: Try zoautil_py jobs module
-          print("--- Method 3: zoautil_py jobs ---")
+          print("=== STEP 3: Submit using zoautil_py.jobs ===")
           try:
-              from zoautil_py import jobs
-              job_id = jobs.submit(DST)
+              # This is the method that worked in the logs!
+              job_info = jobs.submit(DST)
+              job_id = job_info.get('job_id', 'Unknown')
               print(f"Job submitted: {job_id}")
+              
+              # Wait for job to finish
+              print("Waiting 45 seconds for job to complete...")
+              time.sleep(45)
+              
+              # Read JESMSGLG to see if it worked or failed
+              print("--- Checking Job Output (JESMSGLG) ---")
+              try:
+                  output = jobs.read_output(job_id, "JESMSGLG")
+                  print(output)
+              except Exception as e:
+                  print(f"Could not read output: {e}")
+                  
           except Exception as e:
-              print(f"Jobs module error: {e}")
+              print(f"Submit error: {e}")
 
-          print("=== STEP 4: Check if jobs ran ===")
-          time.sleep(30)
-          
-          # Try to list jobs
-          print("--- Job listing ---")
-          res = run_cmd("ls /u/z89674/*.jcl 2>/dev/null || echo 'No JCL files found'")
-          print(res.strip())
-          
+          print("=== STEP 4: Submit Validation ===")
+          try:
+              val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKSMP1)")
+              print(f"Validation job submitted: {val_job.get('job_id')}")
+          except Exception as e:
+              print(f"Validation submit error: {e}")
+
           print("=== Done ===")
           PYEOF
 
