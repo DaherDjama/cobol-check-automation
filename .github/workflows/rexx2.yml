@@ -24,23 +24,29 @@ jobs:
 
           USER = "Z89674"
           SOURCE_DS = f"{USER}.SOURCE"
+          JCL_DS_NAME = f"{USER}.JCL"
 
-          print("=== STEP 1: Clean and Prepare Dataset ===")
-          try:
-              datasets.delete(SOURCE_DS)
-              print("Deleted old SOURCE dataset")
-          except:
-              pass
-          
-          res = run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-          print(f"Allocate: {res.strip()}")
+          print("=== STEP 1: Prepare Datasets ===")
+          # Prepare SOURCE dataset (for REXX and COBOL)
+          try: datasets.delete(SOURCE_DS)
+          except: pass
+          run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print("SOURCE dataset ready")
+
+          # Prepare JCL dataset (for the compile job)
+          try: datasets.delete(JCL_DS_NAME)
+          except: pass
+          run_tso(f"ALLOCATE DSNAME('{JCL_DS_NAME}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print("JCL dataset ready")
 
           print("=== STEP 2: Create Blueprint ===")
           bp = "PGMID: HELLOWLD | AUTHOR: Z89674 | MSG: GREETINGS FROM REXX"
           datasets.write(f"{SOURCE_DS}(BLUPRNT)", bp)
           print("Blueprint created")
 
-          print("=== STEP 3: Write REXX Script with SUBMIT_JOB subroutine ===")
+          print("=== STEP 3: Write REXX Script (Fixed Syntax) ===")
+          # Fixed concatenation using || to avoid spaces in dataset names
+          # Changed JCL destination to .JCL(COMPILER)
           rexx_lines = [
               "/* REXX2 CODE GENERATOR */",
               "USERID = STRIP(SYSVAR('SYSUID'))",
@@ -69,7 +75,7 @@ jobs:
               "COBOL.6 = \"           DISPLAY '\" MSG \"'.\"",
               "COBOL.7 = '           STOP RUN.'",
               "COBOL.0 = 7",
-              "COBOL_DS = USERID || '.SOURCE(' PGMID ')'",
+              "COBOL_DS = USERID || '.SOURCE(' || PGMID || ')'",
               "\"ALLOCATE DA('\"COBOL_DS\"') F(OUTDD) SHR REUSE\"",
               "IF RC \\= 0 THEN \"ALLOCATE DA('\"COBOL_DS\"') F(OUTDD) NEW REUSE\"",
               "\"EXECIO * DISKW OUTDD (STEM COBOL. FINIS)\"",
@@ -80,11 +86,10 @@ jobs:
               "BUILD_JCL:",
               "JCL.1 = '//COMPILE JOB (ACCT),COMPILE,CLASS=A'",
               "JCL.2 = '//STEP1 EXEC IGYWC'",
-              "JCL.3 = '//COBOL.SYSIN DD DSN=' USERID '.SOURCE(' PGMID ')'",
-              "JCL.3 = JCL.3 ',DISP=SHR'",
+              "JCL.3 = '//COBOL.SYSIN DD DSN=' || USERID || '.SOURCE(' || PGMID || '),DISP=SHR'",
               "JCL.4 = '/*'",
               "JCL.0 = 4",
-              "JCL_DS = USERID || '.SOURCE(COMPILER)'",
+              "JCL_DS = USERID || '.JCL(COMPILER)'",
               "\"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) SHR REUSE\"",
               "IF RC \\= 0 THEN \"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) NEW REUSE\"",
               "\"EXECIO * DISKW JCLDD (STEM JCL. FINIS)\"",
@@ -100,14 +105,13 @@ jobs:
           ]
           
           datasets.write(f"{SOURCE_DS}(REXX2)", '\n'.join(rexx_lines))
-          print("REXX script with SUBMIT_JOB subroutine written")
+          print("REXX script written")
 
           print("=== STEP 4: Run REXX Script ===")
           res = run_tso(f"exec '{SOURCE_DS}(REXX2)'")
-          print(f"REXX Output: {res.strip()}")
+          print(f"REXX finished")
 
-          print("=== STEP 5: Ensure Members Exist (Python Fallback) ===")
-          # Create HELLOWLD if REXX failed
+          print("=== STEP 5: Ensure HELLOWLD exists (Python Fallback) ===")
           cobol_code = [
               "       IDENTIFICATION DIVISION.",
               "       PROGRAM-ID. HELLOWLD.",
@@ -123,9 +127,8 @@ jobs:
           except:
               print("Creating HELLOWLD via Python...")
               datasets.write(f"{SOURCE_DS}(HELLOWLD)", '\n'.join(cobol_code))
-              print("HELLOWLD created")
 
-          # Create COMPILER if REXX failed
+          print("=== STEP 6: Ensure COMPILER JCL exists in .JCL dataset ===")
           jcl_code = [
               "//COMPILE JOB (ACCT),COMPILE,CLASS=A,MSGCLASS=H",
               "//STEP1 EXEC IGYWC",
@@ -133,22 +136,21 @@ jobs:
               "/*"
           ]
           try:
-              datasets.read(f"{SOURCE_DS}(COMPILER)")
-              print("COMPILER exists")
+              datasets.read(f"{JCL_DS_NAME}(COMPILER)")
+              print("COMPILER JCL exists")
           except:
-              print("Creating COMPILER via Python...")
-              datasets.write(f"{SOURCE_DS}(COMPILER)", '\n'.join(jcl_code))
-              print("COMPILER created")
+              print("Creating COMPILER JCL via Python...")
+              datasets.write(f"{JCL_DS_NAME}(COMPILER)", '\n'.join(jcl_code))
 
-          print("=== STEP 6: Submit Compile Job ===")
+          print("=== STEP 7: Submit Compile Job ===")
           time.sleep(5)
           try:
-              job = jobs.submit(f"{SOURCE_DS}(COMPILER)")
+              job = jobs.submit(f"{JCL_DS_NAME}(COMPILER)")
               print(f"Submitted compile job: {job.job_id}")
           except Exception as e:
               print(f"Submit failed: {e}")
 
-          print("=== STEP 7: Wait and Validate ===")
+          print("=== STEP 8: Wait and Validate ===")
           time.sleep(30)
           try:
               val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKREXX2)")
