@@ -15,7 +15,6 @@ jobs:
           cat > smpe1.py << 'PYEOF'
           import subprocess
           import time
-          import re
           from zoautil_py import datasets
 
           def run_tso(cmd):
@@ -27,79 +26,33 @@ jobs:
           SRC = "ZXP.PUBLIC.JCL(GIMSAMPU)"
           DST = f"{USER}.JCL(GIMSAMPU)"
 
-          print("=== STEP 1: Prepare Standard JCL Dataset (LRECL=80) ===")
-          # Delete old member
+          print("=== STEP 1: Prepare Dataset ===")
           try:
               datasets.delete(DST)
           except:
               pass
           
-          # Allocate with STANDARD LRECL=80. This is crucial for SUBMIT to work.
           res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
           print(f"Allocate: {res.strip()}")
 
-          print("=== STEP 2: Read Source ===")
+          print("=== STEP 2: Copy Source WITHOUT EDITS ===")
           try:
-              content = datasets.read(SRC)
-              print(f"Read {len(content)} chars")
+              datasets.copy(SRC, DST)
+              print("Copy successful")
           except Exception as e:
-              print(f"Read error: {e}")
-              content = ""
+              print(f"Copy error: {e}")
 
-          print("=== STEP 3: Edit Content ===")
-          if content:
-              # If it's a blob without newlines, split every 80 chars
-              if '\n' not in content and len(content) > 80:
-                  lines = [content[i:i+80] for i in range(0, len(content), 80)]
-                  content = "\n".join(lines)
-                  print("Restored line breaks")
-
-              # Apply Edits from PDF
-              # 1. Symbolics
-              content = content.replace("&HLQ&", "&SYSUID..SMP")
-              content = content.replace("&VOLUME&", "VPWRKA")
-              content = content.replace("&UNIT&", "3390")
-
-              # 2. DEFZONES (IDCAMS): CYL/CYLINDERS -> TRACKS(2 1)
-              # We look for CYLINDERS(x y) or CYL(x y) and replace
-              content = re.sub(r'CYLINDERS\(\d+\s+\d+\)', 'TRACKS(2 1)', content)
-              content = re.sub(r'CYL\(\d+\s+\d+\)', 'TRACKS(2 1)', content)
-
-              # 3. ALLOCDS (JCL DD): CYL/CYLINDERS -> TRK
-              # Note: PDF says "from CYL/CYLINDERS to TRK/TRACKS... use TRK for JCL DD"
-              content = content.replace("CYLINDERS", "TRK") # Be careful with order
-              content = content.replace("CYL", "TRK") 
-              
-              # Fix SPACE parameters for ALLOCDS
-              # Sequential: SPACE=(TRK,(1,1))
-              content = re.sub(r'SPACE=\(TRK,\(\d+,\d+\)\)', 'SPACE=(TRK,(1,1))', content)
-              # PO: SPACE=(TRK,(1,1,1))
-              content = re.sub(r'SPACE=\(TRK,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', content)
-
-              # CRITICAL FIX: Truncate lines to 80 chars to fit LRECL=80 dataset
-              lines = content.split('\n')
-              fixed_lines = []
-              for line in lines:
-                  # Truncate to 80 chars and pad if necessary (though write usually handles it)
-                  fixed_lines.append(line[:80])
-              
-              final_content = "\n".join(fixed_lines)
-
-              try:
-                  datasets.write(DST, final_content)
-                  print("Write successful (LRECL=80)")
-              except Exception as e:
-                  print(f"Write error: {e}")
-
-          print("=== STEP 4: Submit ===")
+          print("=== STEP 3: Submit UNEDITED GIMSAMPU ===")
           res = run_tso(f"SUBMIT '{DST}'")
-          print(f"Submit GIMSAMPU: {res.strip()}")
+          print(f"Submit result: {res.strip()}")
           
-          time.sleep(60)
+          time.sleep(30)
 
-          print("=== STEP 5: Validation ===")
-          res = run_tso("SUBMIT 'ZXP.PUBLIC.JCL(CHKSMP1)'")
-          print(f"Validation: {res.strip()}")
+          print("=== STEP 4: Check Job Output ===")
+          # Try to read the job output using jls and jcat
+          jls_out = run_tso("jls")
+          print(f"JLS output: {jls_out.strip()}")
+          
           print("=== Done ===")
           PYEOF
 
