@@ -26,22 +26,26 @@ jobs:
           SOURCE_DS = f"{USER}.SOURCE"
           PANELS_DS = f"{USER}.PANELS"
 
-          print("=== STEP 1: Prepare Datasets (LRECL=256) ===")
+          print("=== STEP 1: Prepare Datasets (Strict LRECL=80 as per PDF) ===")
           for ds in [PANELS_DS, SOURCE_DS]:
               try: datasets.delete(ds)
               except: pass
-              # LRECL=256 prevents "line exceeds maximum length" errors
-              res = run_tso(f"ALLOCATE DSNAME('{ds}') DSORG(PO) RECFM(F,B) LRECL(256) SPACE(5,5) TRACKS")
+              # PDF requires RECFM: FB LRECL: 80
+              res = run_tso(f"ALLOCATE DSNAME('{ds}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(5,5) TRACKS")
               print(f"Allocated {ds}")
 
           print("=== STEP 2: Copy DASHPNL Panel ===")
           try:
-              # Read directly from public source to avoid copy attribute errors
               content = datasets.read("ZXP.PUBLIC.SOURCE(DASHPNL)")
+              # Handle blob
               if '\n' not in content and len(content) > 80:
                   lines = [content[i:i+80] for i in range(0, len(content), 80)]
-                  content = '\n'.join(lines)
-              datasets.write(f"{PANELS_DS}(DASHPNL)", content)
+              else:
+                  lines = content.split('\n')
+              
+              # CRITICAL: Strip hidden carriage returns to prevent "line exceeds 80" error
+              clean_lines = [line.rstrip() for line in lines]
+              datasets.write(f"{PANELS_DS}(DASHPNL)", '\n'.join(clean_lines))
               print("DASHPNL written successfully")
           except Exception as e:
               print(f"Error with DASHPNL: {e}")
@@ -56,6 +60,8 @@ jobs:
 
               new_lines = []
               for line in lines:
+                  # CRITICAL: Strip hidden characters
+                  line = line.rstrip()
                   upper_line = line.upper()
                   line = line.replace("Z#####", USER)
 
@@ -70,6 +76,11 @@ jobs:
                       line = line.replace("<< BLANK 4 >>", "SYSDSORG")
                   elif "<< BLANK 5 >>" in line:
                       line = line.replace("<< BLANK 5 >>", "SYSRECFM")
+
+                  # Truncate to 80 chars just in case (Safety net)
+                  if len(line) > 80:
+                      print(f"Warning: Truncating line to 80 chars: {line[:80]}")
+                      line = line[:80]
 
                   new_lines.append(line)
                   
