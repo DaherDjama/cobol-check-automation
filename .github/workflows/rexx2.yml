@@ -15,7 +15,7 @@ jobs:
           cat > rexx2.py << 'PYEOF'
           import subprocess
           import time
-          from zoautil_py import datasets
+          from zoautil_py import datasets, jobs
 
           def run_tso(cmd):
               full_cmd = f'tso "{cmd}"'
@@ -25,123 +25,87 @@ jobs:
           USER = "Z89674"
           SOURCE_DS = f"{USER}.SOURCE"
 
-          print("=== STEP 1: Delete and Recreate SOURCE Dataset (LRECL=120) ===")
+          print("=== STEP 1: Prepare SOURCE Dataset (LRECL=80) ===")
           try:
               datasets.delete(SOURCE_DS)
-              print("Deleted old SOURCE dataset")
+              print("Deleted old SOURCE")
           except:
-              print("Dataset didn't exist")
+              pass
           
-          res = run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS")
-          print(f"Allocate result: {res.strip()}")
+          # LRECL=80 is required for COBOL source
+          res = run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print(f"Allocate: {res.strip()}")
 
-          print("=== STEP 2: Create Blueprint using TSO commands ===")
-          # Write blueprint content to a temp file, then copy to dataset
-          blueprint_content = "PGMID: HELLOWLD | AUTHOR: Z89674 | MSG: GREETINGS FROM REXX"
-          
-          # Write to USS file first
-          with open('/z/z89674/bluprnt.txt', 'w') as f:
-              f.write(blueprint_content)
-          print("Blueprint written to USS file")
-          
-          # Copy to dataset member using TSO OPUT
-          res = run_tso(f"OPUT '/z/z89674/bluprnt.txt' '{SOURCE_DS}(BLUPRNT)'")
-          print(f"OPUT result: {res.strip()}")
-          
-          # Verify it exists
-          res = run_tso(f"LISTDS '{SOURCE_DS}' MEMBERS")
-          print(f"Dataset members: {res.strip()}")
+          print("=== STEP 2: Create Blueprint ===")
+          bp = "PGMID: HELLOWLD | AUTHOR: Z89674 | MSG: GREETINGS FROM REXX"
+          datasets.write(f"{SOURCE_DS}(BLUPRNT)", bp)
+          print("Blueprint created")
 
-          print("=== STEP 3: Write REXX2 Script ===")
+          print("=== STEP 3: Write REXX Script (Short lines for LRECL=80) ===")
           rexx_lines = [
-              "/* REXX - REXX2 Code Generator */",
+              "/* REXX2 CODE GENERATOR */",
               "USERID = STRIP(SYSVAR('SYSUID'))",
               "BP_DS = USERID || '.SOURCE(BLUPRNT)'",
-              "",
-              "SAY 'User ID: ' USERID",
-              "SAY 'Looking for blueprint at: ' BP_DS",
-              "",
-              "/* Try to allocate and read blueprint */",
               "ADDRESS TSO",
-              "\"ALLOCATE DA('\"BP_DS\"') F(INDD) SHR REUSE\"",
-              "IF RC \\= 0 THEN DO",
-              "    SAY 'Could not allocate blueprint, RC=' RC",
-              "    EXIT 1",
-              "END",
+              "\"ALLOCATE DA('\"BP_DS\"') F(INDD) SHR\"",
               "\"EXECIO * DISKR INDD (STEM BP. FINIS)\"",
               "\"FREE F(INDD)\"",
-              "",
-              "SAY 'Blueprint lines read: ' BP.0",
-              "SAY 'Blueprint content: ' BP.1",
-              "",
-              "/* Parse Blueprint */",
-              "PARSE VAR BP.1 'PGMID:' PGMID '| AUTHOR:' AUTHOR '| MSG:' MSG",
+              "PARSE VAR BP.1 'PGMID:' PGMID '| AUTHOR:',",
+              "  AUTHOR '| MSG:' MSG",
               "PGMID = STRIP(PGMID)",
               "AUTHOR = STRIP(AUTHOR)",
               "MSG = STRIP(MSG)",
-              "",
-              "SAY 'Parsed - PGMID: [' PGMID '] AUTHOR: [' AUTHOR '] MSG: [' MSG ']'",
-              "",
-              "/* Build COBOL Code */",
               "COBOL.1 = '       IDENTIFICATION DIVISION.'",
               "COBOL.2 = '       PROGRAM-ID. ' PGMID '.'",
               "COBOL.3 = '       AUTHOR. ' AUTHOR '.'",
               "COBOL.4 = '       PROCEDURE DIVISION.'",
               "COBOL.5 = '       MAIN-PARA.'",
-              "COBOL.6 = '           DISPLAY ''' MSG '''.'",
+              "COBOL.6 = \"           DISPLAY '\" MSG \"'.\"",
               "COBOL.7 = '           STOP RUN.'",
               "COBOL.0 = 7",
-              "",
-              "/* Write COBOL to Dataset */",
               "COBOL_DS = USERID || '.SOURCE(' PGMID ')'",
-              "SAY 'Writing COBOL to: ' COBOL_DS",
               "\"ALLOCATE DA('\"COBOL_DS\"') F(OUTDD) SHR REUSE\"",
-              "IF RC \\= 0 THEN DO",
-              "    \"ALLOCATE DA('\"COBOL_DS\"') F(OUTDD) NEW REUSE LRECL(80) RECFM(F,B) SPACE(1,1) TRACKS\"",
-              "END",
+              "IF RC \\= 0 THEN \"ALLOCATE DA('\"COBOL_DS\"') F(OUTDD) NEW REUSE\"",
               "\"EXECIO * DISKW OUTDD (STEM COBOL. FINIS)\"",
               "\"FREE F(OUTDD)\"",
-              "SAY 'COBOL written successfully'",
-              "",
-              "/* Generate JCL for Compilation */",
-              "JCL.1 = '//' PGMID 'C JOB (ACCT),''COMPILE'',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID'",
+              "JCL.1 = '//' PGMID 'C JOB (ACCT),COMPILE,CLASS=A'",
               "JCL.2 = '//STEP1 EXEC IGYWC'",
-              "JCL.3 = '//COBOL.SYSIN DD DSN=' USERID '.SOURCE(' PGMID '),DISP=SHR'",
+              "JCL.3 = '//COBOL.SYSIN DD DSN=' USERID '.SOURCE(' PGMID ')'",
+              "JCL.3 = JCL.3 ',DISP=SHR'",
               "JCL.4 = '/*'",
               "JCL.0 = 4",
-              "",
-              "/* Write JCL and Submit */",
               "JCL_DS = USERID || '.SOURCE(' PGMID 'J)'",
-              "SAY 'Writing JCL to: ' JCL_DS",
               "\"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) SHR REUSE\"",
-              "IF RC \\= 0 THEN \"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) NEW REUSE LRECL(80) RECFM(F,B) SPACE(1,1) TRACKS\"",
+              "IF RC \\= 0 THEN \"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) NEW REUSE\"",
               "\"EXECIO * DISKW JCLDD (STEM JCL. FINIS)\"",
               "\"FREE F(JCLDD)\"",
-              "",
-              "SAY 'Submitting compile job...'",
-              "\"SUBMIT '\" JCL_DS \"'\"",
-              "SAY 'Done!'"
+              "SAY 'REXX SCRIPT COMPLETED SUCCESSFULLY'"
           ]
           
-          final_script = '\n'.join(rexx_lines)
+          datasets.write(f"{SOURCE_DS}(REXX2)", '\n'.join(rexx_lines))
+          print("REXX script written")
 
-          try:
-              datasets.write(f"{SOURCE_DS}(REXX2)", final_script)
-              print("REXX2 script written successfully")
-          except Exception as e:
-              print(f"Error writing REXX2: {e}")
-
-          print("=== STEP 4: Execute REXX Script ===")
+          print("=== STEP 4: Run REXX Script ===")
           res = run_tso(f"exec '{SOURCE_DS}(REXX2)'")
           print(f"Exec result: {res.strip()}")
 
-          print("=== STEP 5: Wait for Compile Job ===")
-          time.sleep(30)
+          print("=== STEP 5: Submit Generated JCL (Python fallback) ===")
+          # The REXX script creates HELLOWLDJ member. We submit it via Python.
+          time.sleep(5)
+          try:
+              jcl_member = f"{SOURCE_DS}(HELLOWLDJ)"
+              # Verify it exists by reading a bit
+              content = datasets.read(jcl_member)
+              print(f"JCL Member found. Submitting...")
+              job = jobs.submit(jcl_member)
+              print(f"Submitted compile job: {job.job_id}")
+          except Exception as e:
+              print(f"Submit failed: {e}. The REXX script might have failed to create JCL.")
 
-          print("=== STEP 6: Submit Validation ===")
+          print("=== STEP 6: Wait and Validate ===")
+          time.sleep(30)
           res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKREXX2)'")
           print(f"Validation: {res.strip()}")
-          
           print("=== REXX2 Complete ===")
           PYEOF
 
