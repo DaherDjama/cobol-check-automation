@@ -35,33 +35,44 @@ jobs:
           res = run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS")
           print(f"Allocate result: {res.strip()}")
 
-          print("=== STEP 2: Create Blueprint (BLUPRNT) ===")
+          print("=== STEP 2: Create Blueprint using TSO commands ===")
+          # Write blueprint content to a temp file, then copy to dataset
           blueprint_content = "PGMID: HELLOWLD | AUTHOR: Z89674 | MSG: GREETINGS FROM REXX"
-          try:
-              datasets.write(f"{SOURCE_DS}(BLUPRNT)", blueprint_content)
-              print("Blueprint created")
-          except Exception as e:
-              print(f"Error creating blueprint: {e}")
+          
+          # Write to USS file first
+          with open('/z/z89674/bluprnt.txt', 'w') as f:
+              f.write(blueprint_content)
+          print("Blueprint written to USS file")
+          
+          # Copy to dataset member using TSO OPUT
+          res = run_tso(f"OPUT '/z/z89674/bluprnt.txt' '{SOURCE_DS}(BLUPRNT)'")
+          print(f"OPUT result: {res.strip()}")
+          
+          # Verify it exists
+          res = run_tso(f"LISTDS '{SOURCE_DS}' MEMBERS")
+          print(f"Dataset members: {res.strip()}")
 
           print("=== STEP 3: Write REXX2 Script ===")
-          # Define the REXX script line by line to avoid indentation issues
           rexx_lines = [
               "/* REXX - REXX2 Code Generator */",
-              "USERID = STRIP(SYSVAR('SYSUID'))", 
+              "USERID = STRIP(SYSVAR('SYSUID'))",
               "BP_DS = USERID || '.SOURCE(BLUPRNT)'",
               "",
-              "SAY 'Checking for blueprint at: ' BP_DS",
+              "SAY 'User ID: ' USERID",
+              "SAY 'Looking for blueprint at: ' BP_DS",
               "",
-              "IF SYSDSN(BP_DS) \\= 'OK' THEN DO",
-              "    SAY 'Blueprint not found'",
+              "/* Try to allocate and read blueprint */",
+              "ADDRESS TSO",
+              "\"ALLOCATE DA('\"BP_DS\"') F(INDD) SHR REUSE\"",
+              "IF RC \\= 0 THEN DO",
+              "    SAY 'Could not allocate blueprint, RC=' RC",
               "    EXIT 1",
               "END",
-              "",
-              "/* Allocate and Read Blueprint */",
-              "ADDRESS TSO",
-              "\"ALLOCATE DA('\"BP_DS\"') F(INDD) SHR\"",
               "\"EXECIO * DISKR INDD (STEM BP. FINIS)\"",
               "\"FREE F(INDD)\"",
+              "",
+              "SAY 'Blueprint lines read: ' BP.0",
+              "SAY 'Blueprint content: ' BP.1",
               "",
               "/* Parse Blueprint */",
               "PARSE VAR BP.1 'PGMID:' PGMID '| AUTHOR:' AUTHOR '| MSG:' MSG",
@@ -69,7 +80,7 @@ jobs:
               "AUTHOR = STRIP(AUTHOR)",
               "MSG = STRIP(MSG)",
               "",
-              "SAY 'Generating COBOL for ' PGMID",
+              "SAY 'Parsed - PGMID: [' PGMID '] AUTHOR: [' AUTHOR '] MSG: [' MSG ']'",
               "",
               "/* Build COBOL Code */",
               "COBOL.1 = '       IDENTIFICATION DIVISION.'",
@@ -83,13 +94,14 @@ jobs:
               "",
               "/* Write COBOL to Dataset */",
               "COBOL_DS = USERID || '.SOURCE(' PGMID ')'",
+              "SAY 'Writing COBOL to: ' COBOL_DS",
               "\"ALLOCATE DA('\"COBOL_DS\"') F(OUTDD) SHR REUSE\"",
               "IF RC \\= 0 THEN DO",
               "    \"ALLOCATE DA('\"COBOL_DS\"') F(OUTDD) NEW REUSE LRECL(80) RECFM(F,B) SPACE(1,1) TRACKS\"",
               "END",
               "\"EXECIO * DISKW OUTDD (STEM COBOL. FINIS)\"",
               "\"FREE F(OUTDD)\"",
-              "SAY 'COBOL written to ' COBOL_DS",
+              "SAY 'COBOL written successfully'",
               "",
               "/* Generate JCL for Compilation */",
               "JCL.1 = '//' PGMID 'C JOB (ACCT),''COMPILE'',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID'",
@@ -100,6 +112,7 @@ jobs:
               "",
               "/* Write JCL and Submit */",
               "JCL_DS = USERID || '.SOURCE(' PGMID 'J)'",
+              "SAY 'Writing JCL to: ' JCL_DS",
               "\"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) SHR REUSE\"",
               "IF RC \\= 0 THEN \"ALLOCATE DA('\"JCL_DS\"') F(JCLDD) NEW REUSE LRECL(80) RECFM(F,B) SPACE(1,1) TRACKS\"",
               "\"EXECIO * DISKW JCLDD (STEM JCL. FINIS)\"",
