@@ -27,78 +27,83 @@ jobs:
           PANELS_DS = f"{USER}.PANELS"
 
           print("=== STEP 1: Prepare Datasets ===")
-          # Prepare PANELS dataset
+          # Prepare PANELS dataset (PDF says SPACE(5,5))
           try: datasets.delete(PANELS_DS)
           except: pass
-          run_tso(f"ALLOCATE DSNAME('{PANELS_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(5,5) TRACKS")
-          print("PANELS dataset ready")
+          res = run_tso(f"ALLOCATE DSNAME('{PANELS_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(5,5) TRACKS")
+          print(f"Allocated PANELS: {res.strip()}")
 
-          # Prepare SOURCE dataset (ensure it exists)
+          # Prepare SOURCE dataset
           try: datasets.delete(SOURCE_DS)
           except: pass
-          run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-          print("SOURCE dataset ready")
+          res = run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print(f"Allocated SOURCE: {res.strip()}")
 
-          print("=== STEP 2: Copy Required Members ===")
-          # Copy the ISPF Panel
-          try:
-              datasets.copy("ZXP.PUBLIC.SOURCE(DASHPNL)", f"{PANELS_DS}(DASHPNL)")
-              print("Copied DASHPNL to PANELS")
-          except Exception as e:
-              print(f"Error copying DASHPNL: {e}")
+          print("=== STEP 2: Copy Members using TSO ===")
+          # Copy DASHPNL
+          res = run_tso(f"copy 'ZXP.PUBLIC.SOURCE(DASHPNL)' '{PANELS_DS}(DASHPNL)'")
+          print(f"Copy DASHPNL: {res.strip()}")
 
-          # Copy the REXX Skeleton
-          try:
-              datasets.copy("ZXP.PUBLIC.SOURCE(REXX3)", f"{SOURCE_DS}(REXX3)")
-              print("Copied REXX3 skeleton to SOURCE")
-          except Exception as e:
-              print(f"Error copying REXX3: {e}")
+          # Copy REXX3
+          res = run_tso(f"copy 'ZXP.PUBLIC.SOURCE(REXX3)' '{SOURCE_DS}(REXX3)'")
+          print(f"Copy REXX3: {res.strip()}")
 
-          print("=== STEP 3: Modify REXX3 Script (Fill Blanks & Add #CRE) ===")
+          print("=== STEP 3: Modify REXX3 Script ===")
           try:
               content = datasets.read(f"{SOURCE_DS}(REXX3)")
               lines = content.split('\n')
-              
-              # We will rebuild the script line by line to inject logic
               new_lines = []
-              cre_initialized = False
               
+              # Track if we've added the initialization
+              cre_init_added = False
+
               for line in lines:
                   upper_line = line.upper()
+                  original_line = line
+
+                  # 1. Replace Z##### with actual User ID (just in case)
+                  line = line.replace("Z#####", USER)
+
+                  # 2. Fill the 5 Blanks
+                  # Blank 1: ADDRESS ISPEXEC
+                  if "<< BLANK 1 >>" in line:
+                      line = "ADDRESS ISPEXEC"
                   
-                  # --- ATTEMPT TO FILL BLANKS ---
-                  # Look for common blank placeholders
-                  if 'BLANK' in upper_line or '<<' in line:
-                      if 'ISPEXEC' in upper_line or 'ADDRESS' in upper_line:
-                          line = "ADDRESS ISPEXEC"
-                      elif 'LIBDEF' in upper_line or 'PANEL' in upper_line:
-                          line = f'"LIBDEF ISPPLIB DATASET ID(\'{USER}.PANELS\')"'
-                      elif 'DISPLAY' in upper_line:
-                          line = '"DISPLAY PANEL(DASHPNL)"'
-                      elif 'RC' in upper_line or 'LEAVE' in upper_line:
-                          line = "IF RC = 8 THEN LEAVE"
-                      elif 'TSO' in upper_line:
-                          line = "ADDRESS TSO"
-                      else:
-                          # If we don't know the blank, keep it but log it
-                          print(f"Unknown blank found: {line}")
+                  # Blank 2: IF RC = 8 THEN LEAVE
+                  elif "BLANK 2" in upper_line:
+                      line = "IF RC = 8 THEN LEAVE"
+                  
+                  # Blank 3: LISTDSI
+                  elif "<< BLANK 3 >>" in line:
+                      line = line.replace("<< BLANK 3 >>", "LISTDSI")
+                  
+                  # Blank 4: SYSDSORG
+                  elif "<< BLANK 4 >>" in line:
+                      line = line.replace("<< BLANK 4 >>", "SYSDSORG")
+                  
+                  # Blank 5: SYSRECFM
+                  elif "<< BLANK 5 >>" in line:
+                      line = line.replace("<< BLANK 5 >>", "SYSRECFM")
 
-                  # --- INJECT #CRE LOGIC (The Solo Mission) ---
-                  # 1. Initialization at the top
-                  if not cre_initialized and ('ADDRESS' in upper_line or 'USERID' in upper_line):
-                      new_lines.append("#CRE = 'UNKNOWN'")
-                      cre_initialized = True
-
-                  # 2. LISTDSI Success Mapping
-                  if 'LISTDSI' in upper_line or 'SYSLRECL' in upper_line:
+                  # 3. Inject #CRE Logic (The Solo Mission)
+                  # A. Initialization at the top (after ADDRESS ISPEXEC or first few lines)
+                  if not cre_init_added and ("ADDRESS ISPEXEC" in line or "USERID" in upper_line):
                       new_lines.append(line)
-                      # Inject right after LISTDSI variables are set
-                      if 'SYSLRECL' in upper_line: 
-                          new_lines.append("#CRE = SYSCREATE")
+                      new_lines.append("#CRE = 'UNKNOWN'")
+                      cre_init_added = True
                       continue # Skip the default append below
 
-                  # 3. Error Block Default
-                  if 'ELSE DO' in upper_line or 'ELSE' in upper_line:
+                  # B. Map SYSCREATE after LISTDSI success
+                  # Look for the line where we assign variables like DORG or RECF
+                  if "SYSDSORG" in line or "SYSRECFM" in line:
+                      new_lines.append(line)
+                      # Add #CRE mapping right after the other variables
+                      if "SYSRECFM" in line: # Do it once
+                          new_lines.append("#CRE = SYSCREATE")
+                      continue
+
+                  # C. Error default in ELSE block
+                  if "ELSE DO" in upper_line or "ELSE" in upper_line:
                       new_lines.append(line)
                       new_lines.append("#CRE = 'ERROR'")
                       continue
