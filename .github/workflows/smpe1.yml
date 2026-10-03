@@ -27,89 +27,74 @@ jobs:
           SRC = "ZXP.PUBLIC.JCL(GIMSAMPU)"
           DST = f"{USER}.JCL(GIMSAMPU)"
 
-          print("=== STEP 1: Prepare Dataset ===")
-          # Try to delete old member only, not the whole dataset
+          print("=== STEP 1: Prepare Standard JCL Dataset (LRECL=80) ===")
+          # Delete old member
           try:
               datasets.delete(DST)
-              print("Deleted old member")
           except:
               pass
           
-          # Ensure dataset exists with standard JCL attributes
-          # If it doesn't exist, create it. If it does, this might fail, which is fine.
+          # Allocate with STANDARD LRECL=80. This is crucial for SUBMIT to work.
           res = run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
           print(f"Allocate: {res.strip()}")
 
-          print("=== STEP 2: Copy Source ===")
+          print("=== STEP 2: Read Source ===")
           try:
-              datasets.copy(SRC, DST)
-              print("Copy successful")
-          except Exception as e:
-              print(f"Copy error: {e}")
-
-          print("=== STEP 3: Read and Edit ===")
-          try:
-              content = datasets.read(DST)
+              content = datasets.read(SRC)
               print(f"Read {len(content)} chars")
-              
-              # Ensure we have lines
-              if '\n' not in content:
-                  # If no newlines, it's a blob. Split every 80 chars.
+          except Exception as e:
+              print(f"Read error: {e}")
+              content = ""
+
+          print("=== STEP 3: Edit Content ===")
+          if content:
+              # If it's a blob without newlines, split every 80 chars
+              if '\n' not in content and len(content) > 80:
                   lines = [content[i:i+80] for i in range(0, len(content), 80)]
                   content = "\n".join(lines)
-                  print("Forced line breaks")
+                  print("Restored line breaks")
+
+              # Apply Edits from PDF
+              # 1. Symbolics
+              content = content.replace("&HLQ&", "&SYSUID..SMP")
+              content = content.replace("&VOLUME&", "VPWRKA")
+              content = content.replace("&UNIT&", "3390")
+
+              # 2. DEFZONES (IDCAMS): CYL/CYLINDERS -> TRACKS(2 1)
+              # We look for CYLINDERS(x y) or CYL(x y) and replace
+              content = re.sub(r'CYLINDERS\(\d+\s+\d+\)', 'TRACKS(2 1)', content)
+              content = re.sub(r'CYL\(\d+\s+\d+\)', 'TRACKS(2 1)', content)
+
+              # 3. ALLOCDS (JCL DD): CYL/CYLINDERS -> TRK
+              # Note: PDF says "from CYL/CYLINDERS to TRK/TRACKS... use TRK for JCL DD"
+              content = content.replace("CYLINDERS", "TRK") # Be careful with order
+              content = content.replace("CYL", "TRK") 
               
+              # Fix SPACE parameters for ALLOCDS
+              # Sequential: SPACE=(TRK,(1,1))
+              content = re.sub(r'SPACE=\(TRK,\(\d+,\d+\)\)', 'SPACE=(TRK,(1,1))', content)
+              # PO: SPACE=(TRK,(1,1,1))
+              content = re.sub(r'SPACE=\(TRK,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', content)
+
+              # CRITICAL FIX: Truncate lines to 80 chars to fit LRECL=80 dataset
               lines = content.split('\n')
-              edited_lines = []
-              
+              fixed_lines = []
               for line in lines:
-                  # 1. Symbolics (Use literal Z89674.SMP to be safe)
-                  line = line.replace("&HLQ&", "Z89674.SMP")
-                  line = line.replace("&VOLUME&", "VPWRKA")
-                  line = line.replace("&UNIT&", "3390")
-                  
-                  # 2. DEFZONES Step (IDCAMS): Change CYL/CYLINDERS to TRACKS(2 1)
-                  # This is tricky. We look for CYLINDERS or CYL followed by (numbers)
-                  # and replace with TRACKS(2 1)
-                  if 'CYLINDERS' in line or 'CYL(' in line:
-                      # Simple replacement for the DEFZONES step
-                      line = re.sub(r'CYLINDERS\(\d+\s+\d+\)', 'TRACKS(2 1)', line)
-                      line = re.sub(r'CYL\(\d+\s+\d+\)', 'TRACKS(2 1)', line)
-                  
-                  # 3. ALLOCDS Step (JCL DD): Change CYL/CYLINDERS to TRK
-                  # And adjust SPACE parameters
-                  if 'SPACE=' in line:
-                      # Sequential: SPACE=(..., (1,1)) -> SPACE=(TRK,(1,1))
-                      # PO: SPACE=(..., (1,1,1)) -> SPACE=(TRK,(1,1,1))
-                      # We replace the unit part with TRK
-                      line = re.sub(r'SPACE=\(CYL,', 'SPACE=(TRK,', line)
-                      line = re.sub(r'SPACE=\(CYLINDERS,', 'SPACE=(TRK,', line)
-                      # Ensure numbers are 1,1 or 1,1,1
-                      # This is a simplification. The PDF says set to 1 primary, 1 secondary.
-                      line = re.sub(r'SPACE=\(TRK,\(\d+,\d+\)\)', 'SPACE=(TRK,(1,1))', line)
-                      line = re.sub(r'SPACE=\(TRK,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', line)
-                      
-                  edited_lines.append(line)
-                  
-              new_content = "\n".join(edited_lines)
+                  # Truncate to 80 chars and pad if necessary (though write usually handles it)
+                  fixed_lines.append(line[:80])
               
-              # Write back
-              datasets.write(DST, new_content)
-              print("Write successful")
-          except Exception as e:
-              print(f"Edit error: {e}")
+              final_content = "\n".join(fixed_lines)
+
+              try:
+                  datasets.write(DST, final_content)
+                  print("Write successful (LRECL=80)")
+              except Exception as e:
+                  print(f"Write error: {e}")
 
           print("=== STEP 4: Submit ===")
-          # Try submitting
           res = run_tso(f"SUBMIT '{DST}'")
-          print(f"Submit result: {res.strip()}")
+          print(f"Submit GIMSAMPU: {res.strip()}")
           
-          # If RC(12), try submitting the original unedited to test
-          if 'RC(12)' in res or 'IKJ' in res:
-              print("Submit failed. Testing original...")
-              # We can't easily test original now since we overwrote it.
-              pass
-
           time.sleep(60)
 
           print("=== STEP 5: Validation ===")
