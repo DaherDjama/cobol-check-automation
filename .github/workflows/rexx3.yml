@@ -39,14 +39,20 @@ jobs:
           res = run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
           print(f"Allocated SOURCE: {res.strip()}")
 
-          print("=== STEP 2: Copy Members using TSO ===")
+          print("=== STEP 2: Copy Members using zoautil_py ===")
           # Copy DASHPNL
-          res = run_tso(f"copy 'ZXP.PUBLIC.SOURCE(DASHPNL)' '{PANELS_DS}(DASHPNL)'")
-          print(f"Copy DASHPNL: {res.strip()}")
+          try:
+              datasets.copy("ZXP.PUBLIC.SOURCE(DASHPNL)", f"{PANELS_DS}(DASHPNL)")
+              print("Copied DASHPNL to PANELS")
+          except Exception as e:
+              print(f"Error copying DASHPNL: {e}")
 
           # Copy REXX3
-          res = run_tso(f"copy 'ZXP.PUBLIC.SOURCE(REXX3)' '{SOURCE_DS}(REXX3)'")
-          print(f"Copy REXX3: {res.strip()}")
+          try:
+              datasets.copy("ZXP.PUBLIC.SOURCE(REXX3)", f"{SOURCE_DS}(REXX3)")
+              print("Copied REXX3 to SOURCE")
+          except Exception as e:
+              print(f"Error copying REXX3: {e}")
 
           print("=== STEP 3: Modify REXX3 Script ===")
           try:
@@ -54,51 +60,41 @@ jobs:
               lines = content.split('\n')
               new_lines = []
               
-              # Track if we've added the initialization
               cre_init_added = False
 
               for line in lines:
                   upper_line = line.upper()
-                  original_line = line
-
-                  # 1. Replace Z##### with actual User ID (just in case)
+                  
+                  # 1. Replace Z##### with actual User ID
                   line = line.replace("Z#####", USER)
 
-                  # 2. Fill the 5 Blanks
-                  # Blank 1: ADDRESS ISPEXEC
+                  # 2. Fill the 5 Blanks based on logs
                   if "<< BLANK 1 >>" in line:
-                      line = "ADDRESS ISPEXEC"
-                  
-                  # Blank 2: IF RC = 8 THEN LEAVE
+                      line = line.replace("<< BLANK 1 >>", "ADDRESS ISPEXEC")
                   elif "BLANK 2" in upper_line:
+                      # The log showed: /* << BLANK 2: If Return Code is 8... >> */
+                      # We replace the whole comment line with the command
                       line = "IF RC = 8 THEN LEAVE"
-                  
-                  # Blank 3: LISTDSI
                   elif "<< BLANK 3 >>" in line:
                       line = line.replace("<< BLANK 3 >>", "LISTDSI")
-                  
-                  # Blank 4: SYSDSORG
                   elif "<< BLANK 4 >>" in line:
                       line = line.replace("<< BLANK 4 >>", "SYSDSORG")
-                  
-                  # Blank 5: SYSRECFM
                   elif "<< BLANK 5 >>" in line:
                       line = line.replace("<< BLANK 5 >>", "SYSRECFM")
 
                   # 3. Inject #CRE Logic (The Solo Mission)
-                  # A. Initialization at the top (after ADDRESS ISPEXEC or first few lines)
+                  # A. Initialization
                   if not cre_init_added and ("ADDRESS ISPEXEC" in line or "USERID" in upper_line):
                       new_lines.append(line)
                       new_lines.append("#CRE = 'UNKNOWN'")
                       cre_init_added = True
-                      continue # Skip the default append below
+                      continue
 
                   # B. Map SYSCREATE after LISTDSI success
                   # Look for the line where we assign variables like DORG or RECF
                   if "SYSDSORG" in line or "SYSRECFM" in line:
                       new_lines.append(line)
-                      # Add #CRE mapping right after the other variables
-                      if "SYSRECFM" in line: # Do it once
+                      if "SYSRECFM" in line: 
                           new_lines.append("#CRE = SYSCREATE")
                       continue
 
