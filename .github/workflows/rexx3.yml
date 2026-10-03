@@ -26,24 +26,31 @@ jobs:
           SOURCE_DS = f"{USER}.SOURCE"
           PANELS_DS = f"{USER}.PANELS"
 
-          print("=== STEP 1: Prepare Datasets (Strict LRECL=80 as per PDF) ===")
-          for ds in [PANELS_DS, SOURCE_DS]:
-              try: datasets.delete(ds)
-              except: pass
-              # PDF requires RECFM: FB LRECL: 80
-              res = run_tso(f"ALLOCATE DSNAME('{ds}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(5,5) TRACKS")
-              print(f"Allocated {ds}")
+          print("=== STEP 1: Prepare Datasets (PDSE for PANELS as per PDF) ===")
+          
+          # 1. PANELS dataset: PDF says "Partitioned Data Set: Extended" -> DSNTYPE(LIBRARY)
+          try: datasets.delete(PANELS_DS)
+          except: pass
+          # DSNTYPE(LIBRARY) creates a PDSE (Extended) dataset
+          res = run_tso(f"ALLOCATE DSNAME('{PANELS_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(5,5) TRACKS DSNTYPE(LIBRARY)")
+          print(f"Allocated {PANELS_DS} (PDSE): {res.strip()}")
+
+          # 2. SOURCE dataset: Standard PDS is usually fine, but let's make it PDSE too just in case
+          try: datasets.delete(SOURCE_DS)
+          except: pass
+          res = run_tso(f"ALLOCATE DSNAME('{SOURCE_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(5,5) TRACKS DSNTYPE(LIBRARY)")
+          print(f"Allocated {SOURCE_DS} (PDSE): {res.strip()}")
 
           print("=== STEP 2: Copy DASHPNL Panel ===")
           try:
               content = datasets.read("ZXP.PUBLIC.SOURCE(DASHPNL)")
-              # Handle blob
+              # Handle blob: split if no newlines
               if '\n' not in content and len(content) > 80:
                   lines = [content[i:i+80] for i in range(0, len(content), 80)]
               else:
                   lines = content.split('\n')
               
-              # CRITICAL: Strip hidden carriage returns to prevent "line exceeds 80" error
+              # Strip hidden characters to prevent line length errors
               clean_lines = [line.rstrip() for line in lines]
               datasets.write(f"{PANELS_DS}(DASHPNL)", '\n'.join(clean_lines))
               print("DASHPNL written successfully")
@@ -60,8 +67,7 @@ jobs:
 
               new_lines = []
               for line in lines:
-                  # CRITICAL: Strip hidden characters
-                  line = line.rstrip()
+                  line = line.rstrip() # Strip hidden chars
                   upper_line = line.upper()
                   line = line.replace("Z#####", USER)
 
@@ -77,9 +83,8 @@ jobs:
                   elif "<< BLANK 5 >>" in line:
                       line = line.replace("<< BLANK 5 >>", "SYSRECFM")
 
-                  # Truncate to 80 chars just in case (Safety net)
+                  # Safety truncation
                   if len(line) > 80:
-                      print(f"Warning: Truncating line to 80 chars: {line[:80]}")
                       line = line[:80]
 
                   new_lines.append(line)
