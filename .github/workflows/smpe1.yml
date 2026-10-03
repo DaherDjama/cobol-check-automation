@@ -25,59 +25,53 @@ jobs:
           USER = "Z89674"
           SRC = "ZXP.PUBLIC.JCL(GIMSAMPU)"
           DST = f"{USER}.JCL(GIMSAMPU)"
+          JCL_DS = f"{USER}.JCL"
 
-          print("=== STEP 1: Prepare Dataset (LRECL=120 for edits) ===")
-          # Delete old member
+          print("=== STEP 1: Delete and Recreate Dataset ===")
+          # Delete the entire dataset (not just the member)
           try:
-              datasets.delete(DST)
-              print("Deleted old member")
+              datasets.delete(JCL_DS)
+              print("Deleted entire JCL dataset")
           except:
-              pass
+              print("Dataset didn't exist or delete failed")
           
-          # Allocate with LRECL=120 to handle longer lines after edits
-          # &HLQ& (6 chars) -> &SYSUID..SMP (12 chars) adds 6 chars. 80+6=86. 120 is safe.
-          res = run_cmd(f'tso "ALLOCATE DSNAME(\'{USER}.JCL\') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS"')
-          print(f"Allocate: {res.strip()}")
+          # Allocate with LRECL=120
+          res = run_cmd(f'tso "ALLOCATE DSNAME(\'{JCL_DS}\') DSORG(PO) RECFM(F,B) LRECL(120) SPACE(1,1) TRACKS"')
+          print(f"Allocate result: {res.strip()}")
 
           print("=== STEP 2: Read and Edit Source ===")
           try:
               content = datasets.read(SRC)
               print(f"Read {len(content)} chars")
               
-              # Fix the "blob" issue: split into lines
+              # Split into lines
               if '\n' in content:
                   lines = content.split('\n')
               else:
-                  # If no newlines, assume 80 char fixed block
                   lines = [content[i:i+80] for i in range(0, len(content), 80)]
               print(f"Split into {len(lines)} lines")
 
               edited_lines = []
               for line in lines:
-                  # 1. Symbolics (from PDF Step 2-4)
+                  # 1. Symbolics
                   line = line.replace("&HLQ&", "&SYSUID..SMP")
                   line = line.replace("&VOLUME&", "VPWRKA")
                   line = line.replace("&UNIT&", "3390")
 
-                  # 2. DEFZONES Step (IDCAMS): Change CYL/CYLINDERS to TRACKS(2 1)
-                  # Look for IDCAMS DEFINE CLUSTER syntax
+                  # 2. DEFZONES (IDCAMS): CYL/CYLINDERS -> TRACKS(2 1)
                   if 'CYLINDERS(' in line or 'CYL(' in line:
                       line = re.sub(r'CYLINDERS\(\d+\s+\d+\)', 'TRACKS(2 1)', line)
                       line = re.sub(r'CYL\(\d+\s+\d+\)', 'TRACKS(2 1)', line)
                   
-                  # 3. ALLOCDS Step (JCL DD): Change SPACE=(CYL,...) to SPACE=(TRK,(1,1))
-                  # Sequential: (1,1), PO: (1,1,1)
-                  # Replace 2-number space: SPACE=(CYL,(x,y)) -> SPACE=(TRK,(1,1))
+                  # 3. ALLOCDS (JCL DD): SPACE=(CYL,...) -> SPACE=(TRK,(1,1)) or (1,1,1)
                   line = re.sub(r'SPACE=\(CYLINDERS,\(\d+,\d+\)\)', 'SPACE=(TRK,(1,1))', line)
                   line = re.sub(r'SPACE=\(CYL,\(\d+,\d+\)\)', 'SPACE=(TRK,(1,1))', line)
-                  # Replace 3-number space: SPACE=(CYL,(x,y,z)) -> SPACE=(TRK,(1,1,1))
                   line = re.sub(r'SPACE=\(CYLINDERS,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', line)
                   line = re.sub(r'SPACE=\(CYL,\(\d+,\d+,\d+\)\)', 'SPACE=(TRK,(1,1,1))', line)
 
                   edited_lines.append(line)
                   
               final_content = "\n".join(edited_lines)
-              
               datasets.write(DST, final_content)
               print("Write successful")
           except Exception as e:
@@ -85,16 +79,15 @@ jobs:
 
           print("=== STEP 3: Submit using zoautil_py.jobs ===")
           try:
-              # This is the method that worked in the logs!
-              job_info = jobs.submit(DST)
-              job_id = job_info.get('job_id', 'Unknown')
+              # Submit returns a Job object
+              job = jobs.submit(DST)
+              job_id = job.job_id  # Access job_id attribute directly
               print(f"Job submitted: {job_id}")
               
-              # Wait for job to finish
               print("Waiting 45 seconds for job to complete...")
               time.sleep(45)
               
-              # Read JESMSGLG to see if it worked or failed
+              # Read job output
               print("--- Checking Job Output (JESMSGLG) ---")
               try:
                   output = jobs.read_output(job_id, "JESMSGLG")
@@ -108,7 +101,7 @@ jobs:
           print("=== STEP 4: Submit Validation ===")
           try:
               val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKSMP1)")
-              print(f"Validation job submitted: {val_job.get('job_id')}")
+              print(f"Validation job submitted: {val_job.job_id}")
           except Exception as e:
               print(f"Validation submit error: {e}")
 
