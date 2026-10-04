@@ -24,14 +24,18 @@ jobs:
           pkill -f "program2.js" || true
           sleep 2
 
-          echo "=== Setting Environment (Critical for zoau module) ==="
-          # FIX: Add the correct Xplore Node.js path to PATH
-          export PATH=$PATH:/global/node/bin
+          echo "=== Verifying Node.js location ==="
+          # Use absolute path to node binary
+          NODE_BIN="/global/node/bin/node"
+          if [ ! -f "$NODE_BIN" ]; then
+              echo "ERROR: Node.js not found at $NODE_BIN"
+              exit 1
+          fi
+          echo "Found Node.js at: $NODE_BIN"
+          $NODE_BIN --version
+
+          echo "=== Setting Environment ==="
           export NODE_PATH=/global/node/lib/node_modules
-          
-          # Verify node is found
-          which node
-          node --version
 
           echo "=== Creating program2.js ==="
           mkdir -p ~/node
@@ -98,8 +102,8 @@ jobs:
           JSEOF
 
           echo "=== Starting Server ==="
-          # Start in background with PORT set
-          PORT=89674 nohup node ~/node/program2.js > ~/node/server.log 2>&1 &
+          # Use absolute path to node binary
+          PORT=89674 nohup $NODE_BIN ~/node/program2.js > ~/node/server.log 2>&1 &
           sleep 5
           
           echo "=== Server Log (Check for errors) ==="
