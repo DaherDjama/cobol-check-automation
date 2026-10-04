@@ -1,0 +1,121 @@
+name: NODE2 Challenge Automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  node2-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH Key for LinuxONE
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.LNX1_PEM_KEY }}" > ~/.ssh/lnx1key.pem
+          chmod 600 ~/.ssh/lnx1key.pem
+
+      - name: Install SSH tools for z/OS
+        run: sudo apt-get install -y sshpass
+
+      - name: Create and Start Node2 Server on LinuxONE
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/lnx1key.pem linux1@${{ secrets.LNX1_IP }} << 'EOF'
+          
+          echo "=== Cleaning up old processes ==="
+          pkill -f "node program2.js" || true
+          sleep 2
+
+          echo "=== Creating program2.js ==="
+          mkdir -p ~/node
+          cat > ~/node/program2.js << 'JSEOF'
+          const http = require('http');
+          const { datasets } = require("zoau");
+
+          // Use port 89674 (from Z89674) or environment variable
+          const port = process.env.PORT || 89674;
+          let myname = process.env.LOGNAME || 'Z89674';
+
+          function sendResponse(res, content, code, type) {
+              res.statusCode = code;
+              res.setHeader('Content-Type', type || 'text/plain');
+              res.end(content);
+          }
+
+          const server = http.createServer((req, res) => {
+              const basic = /^\/$/;
+              const hello = /^\/hello\//;
+              const data = /^\/data\/.*/;
+
+              console.log('Request URL:', req.url);
+
+              // Ignore favicon requests
+              if (req.url === '/favicon.ico') {
+                  res.statusCode = 204;
+                  res.end();
+                  return;
+              }
+
+              // Handle root URL
+              if (basic.test(req.url)) {
+                  sendResponse(res, `Hello World from ${myname} on z/OS`, 200, 'text/plain');
+              } 
+              // Handle /hello/<name>
+              else if (hello.test(req.url)) {
+                  const name = req.url.replace(/^\/hello\/([A-Za-z0-9]+).*$/, '$1');
+                  sendResponse(res, `Hello ${name}!`, 200, 'text/plain');
+              } 
+              // Handle /data/<member>
+              else if (data.test(req.url)) {
+                  const member = req.url.replace(/^\/data\/([A-Za-z0-9]+).*$/, '$1');
+                  const dsn = `ZXP.PUBLIC.SOURCE(${member})`;
+                  
+                  datasets.read(dsn)
+                      .then(function(contents) {
+                          sendResponse(res, contents, 200, "text/plain");
+                      })
+                      .catch(function(error) {
+                          sendResponse(res, `${dsn} not found`, 404, "text/plain");
+                      });
+              } 
+              else {
+                  sendResponse(res, 'Not Found', 404, 'text/plain');
+              }
+          });
+
+          server.listen(port, () => {
+              console.log(`Server running at http://0.0.0.0:${port}/`);
+          });
+          JSEOF
+
+          echo "=== Starting Server ==="
+          # Start in background with PORT set
+          PORT=89674 nohup node ~/node/program2.js > ~/node/server.log 2>&1 &
+          sleep 5
+          
+          echo "=== Checking if server is running ==="
+          curl -s http://localhost:89674/ || echo "Server might not be ready yet"
+          EOF
+
+      - name: Create Python script for z/OS Validation
+        run: |
+          cat > validate_node2.py << 'PYEOF'
+          import subprocess
+          import time
+          from zoautil_py import jobs
+
+          print("=== Submitting NODE2 Validation Job ===")
+          try:
+              val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKNODE2)")
+              print(f"Validation job submitted: {val_job.job_id}")
+          except Exception as e:
+              print(f"Validation submit error: {e}")
+              
+          print("=== NODE2 Automation Complete ===")
+          PYEOF
+
+      - name: Copy validation script to z/OS
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no validate_node2.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/validate_node2.py
+
+      - name: Execute validation on z/OS
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/validate_node2.py"
