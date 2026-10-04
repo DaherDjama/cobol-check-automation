@@ -76,12 +76,12 @@ jobs:
               res = subprocess.run(cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
-          # Create start.sh script directly on z/OS using Python (avoids shell escaping issues)
+          # Create start.sh script directly on z/OS using Python
           start_sh_content = """#!/bin/sh
           export PATH=/global/node/bin:$PATH
           export NODE_PATH=/global/node/lib/node_modules
           
-          # Kill old processes (simple approach)
+          # Kill old processes
           ps -ef | grep program2.js | grep -v grep | awk '{print $2}' | xargs kill 2>/dev/null
           sleep 2
           
@@ -98,11 +98,6 @@ jobs:
           # Make it executable
           run_cmd('chmod +x /z/z89674/start.sh')
           print("Created start.sh on z/OS")
-
-          # Copy program2.js to z/OS
-          run_cmd('mkdir -p ~/node')
-          # We'll copy it via SCP in the next step
-          print("Ready for program2.js copy")
           PYEOF
 
       - name: Copy files to z/OS
@@ -113,8 +108,8 @@ jobs:
           # Copy program2.js
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no node/program2.js ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/node/program2.js
           
-          # Run the Python setup script to create start.sh
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "python3 /z/z89674/setup_and_start.py"
+          # FIX: Source profile before running python3
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/setup_and_start.py"
           
           echo "All files copied and setup complete"
 
