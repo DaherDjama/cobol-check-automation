@@ -78,19 +78,41 @@ jobs:
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no node/program2.js ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/node/program2.js
           echo "Copied program2.js to z/OS"
 
-      - name: Start Node2 Server on z/OS USS
+      - name: Start Node2 Server on z/OS USS and Verify
         run: |
-          # Kill old processes first
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "pkill -f 'program2.js' || true"
+          # Run a comprehensive startup and check script
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'ZOS_EOF'
+          
+          echo "=== Setting Environment ==="
+          export PATH=/global/node/bin:$PATH
+          export NODE_PATH=/global/node/lib/node_modules
+          
+          echo "=== Verifying Node ==="
+          which node
+          node --version
+          
+          echo "=== Preparing Script ==="
+          chmod +x ~/node/program2.js
+          
+          echo "=== Killing old processes ==="
+          ps -ef | grep program2.js | grep -v grep | awk '{print $2}' | xargs kill 2>/dev/null || true
           sleep 2
           
-          # Start the server with the correct PATH
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "export PATH=/global/node/bin:\$PATH; export NODE_PATH=/global/node/lib/node_modules; nohup node ~/node/program2.js > ~/node/server.log 2>&1 &"
+          echo "=== Starting Server ==="
+          # Use nohup and disown to ensure it survives SSH disconnect
+          nohup node ~/node/program2.js > ~/node/server.log 2>&1 &
+          disown
+          
+          echo "=== Waiting 5 seconds for startup ==="
           sleep 5
           
-          # Check if it's running
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat ~/node/server.log"
-          echo "Server start command issued"
+          echo "=== Server Log Output (CRITICAL) ==="
+          cat ~/node/server.log
+          
+          echo "=== Process Check ==="
+          ps -ef | grep program2.js | grep -v grep
+          
+          ZOS_EOF
 
       - name: Create Python script for z/OS Validation
         run: |
@@ -116,5 +138,3 @@ jobs:
       - name: Execute validation on z/OS
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/validate_node2.py"
-                  
-                  
