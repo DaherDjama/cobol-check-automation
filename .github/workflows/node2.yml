@@ -1,3 +1,4 @@
+
 name: NODE2 Challenge Automation
 
 on:
@@ -68,39 +69,36 @@ jobs:
 
       - name: Create start.sh script locally
         run: |
+          mkdir -p node
           cat > node/start.sh << 'SHEOF'
           #!/bin/sh
-          # Set exact paths for z/OS USS Node.js
           export PATH=/global/node/bin:$PATH
           export NODE_PATH=/global/node/lib/node_modules
           
-          # Kill any existing instances
-          ps -ef | grep program2.js | grep -v grep | awk '{print $2}' | xargs kill 2>/dev/null
+          # Simple kill command to avoid syntax errors
+          kill $(ps -ef | grep program2.js | grep -v grep | awk '{print $2}') 2>/dev/null
           sleep 2
           
           cd ~/node
-          
-          # Start server in background
           nohup node program2.js > server.log 2>&1 &
-          
-          # Wait for startup
           sleep 5
-          
-          # Print log to verify
-          echo "=== SERVER LOG ==="
           cat server.log
-          echo "=================="
           SHEOF
-          chmod +x node/start.sh
 
-      - name: Copy files to z/OS USS
+      - name: Copy files to z/OS USS and Fix Permissions
         run: |
+          # Create directory
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/node"
+          
+          # Copy files
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no node/program2.js ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/node/program2.js
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no node/start.sh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/node/start.sh
-          echo "Files copied to z/OS"
+          
+          # CRITICAL FIX: Remove Windows carriage returns and make executable
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "tr -d '\r' < ~/node/start.sh > ~/node/start_fixed.sh && mv ~/node/start_fixed.sh ~/node/start.sh && chmod +x ~/node/start.sh"
+          echo "Files copied and permissions fixed"
 
-      - name: Start Server and Check Logs
+      - name: Start Server
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "~/node/start.sh"
 
