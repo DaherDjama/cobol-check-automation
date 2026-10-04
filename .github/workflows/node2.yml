@@ -66,56 +66,57 @@ jobs:
           });
           JSEOF
 
-      - name: Create Python script to setup and start server on z/OS
+      - name: Create start_node.py locally
         run: |
-          cat > setup_and_start.py << 'PYEOF'
-          import subprocess
+          cat > node/start_node.py << 'PYEOF'
           import os
+          import subprocess
+          import time
 
-          def run_cmd(cmd):
-              res = subprocess.run(cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
-              return res.stdout + res.stderr
+          # 1. Setup Environment
+          os.environ['PATH'] = '/global/node/bin:' + os.environ.get('PATH', '')
+          os.environ['NODE_PATH'] = '/global/node/lib/node_modules'
 
-          # Create start.sh script directly on z/OS using Python
-          start_sh_content = """#!/bin/sh
-          export PATH=/global/node/bin:$PATH
-          export NODE_PATH=/global/node/lib/node_modules
-          
-          # Kill old processes
-          ps -ef | grep program2.js | grep -v grep | awk '{print $2}' | xargs kill 2>/dev/null
-          sleep 2
-          
-          cd ~/node
-          nohup node program2.js > server.log 2>&1 &
-          sleep 5
-          cat server.log
-          """
+          # 2. Kill old processes
+          print("Killing old processes...")
+          subprocess.run("ps -ef | grep program2.js | grep -v grep | awk '{print $2}' | xargs kill 2>/dev/null", shell=True)
+          time.sleep(2)
 
-          # Write the script
-          with open('/z/z89674/start.sh', 'w') as f:
-              f.write(start_sh_content)
-          
-          # Make it executable
-          run_cmd('chmod +x /z/z89674/start.sh')
-          print("Created start.sh on z/OS")
+          # 3. Ensure directory exists and change to it
+          node_dir = '/z/z89674/node'
+          os.makedirs(node_dir, exist_ok=True)
+          os.chdir(node_dir)
+
+          # 4. Start Server in background
+          print("Starting Node server...")
+          log_file = open('server.log', 'w')
+          # start_new_session=True acts like nohup/disown
+          subprocess.Popen(['node', 'program2.js'], stdout=log_file, stderr=log_file, start_new_session=True)
+          log_file.close()
+
+          # 5. Wait and print log
+          time.sleep(5)
+          print("--- SERVER LOG ---")
+          with open('server.log', 'r') as f:
+              print(f.read())
+          print("------------------")
           PYEOF
 
       - name: Copy files to z/OS
         run: |
-          # Copy the Python setup script
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no setup_and_start.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/setup_and_start.py
+          # Create directory
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p /z/z89674/node"
           
-          # Copy program2.js
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no node/program2.js ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/node/program2.js
+          # Copy files
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no node/program2.js ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/node/program2.js
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no node/start_node.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/start_node.py
           
-          # FIX: Source profile before running python3
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/setup_and_start.py"
-          
-          echo "All files copied and setup complete"
+          echo "Files copied"
 
-      - name: Start Server
+      - name: Start Server using Python
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "~/node/start.sh"
+          # Run the python script to start the server
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/start_node.py"
 
       - name: Submit Validation Job
         run: |
