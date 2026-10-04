@@ -1,4 +1,3 @@
-
 name: RACF1 Challenge Automation
 
 on:
@@ -16,7 +15,7 @@ jobs:
           cat > racf1.py << 'PYEOF'
           import subprocess
           import time
-          from zoautil_py import datasets
+          from zoautil_py import datasets, jobs
 
           def run_tso(cmd):
               full_cmd = f'tso "{cmd}"'
@@ -24,51 +23,33 @@ jobs:
               return res.stdout + res.stderr
 
           USER = "Z89674"
-          DATASET = f"{USER}.MAGIC"
+          MAGIC_DS = f"{USER}.MAGIC"
 
-          print("=== STEP 1: Create sequential dataset Z89674.MAGIC ===")
-          run_tso(f"DELETE '{DATASET}'")
-          res = run_tso(f"ALLOCATE DSNAME('{DATASET}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-          print(f"Allocate: {res.strip()}")
+          print("=== STEP 1: Create Z89674.MAGIC Dataset ===")
+          # PDF says: Create a sequential(PS) dataset
+          res = run_tso(f"ALLOCATE DSNAME('{MAGIC_DS}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          print(f"Allocate result: {res.strip()}")
 
-          print("=== STEP 2: Write minimal JCL to dataset ===")
-          # Delete old member
+          print("=== STEP 2: Add RACF Profile (UACC NONE) ===")
+          # PDF Step 9: "Create a DSD profile... with UACC(NONE). generic is not needed"
+          res = run_tso(f"addsd '{MAGIC_DS}' uacc(none)")
+          print(f"ADDSD result: {res.strip()}")
+
+          print("=== STEP 3: Permit IBM0001 UPDATE Access ===")
+          # PDF Step 9: "Permit user IBM0001 to have write(UPDATE) access"
+          res = run_tso(f"permit '{MAGIC_DS}' id(IBM0001) access(update)")
+          print(f"PERMIT result: {res.strip()}")
+
+          print("=== STEP 4: Verify Permissions (Optional but good for logs) ===")
+          res = run_tso(f"ld da('{MAGIC_DS}') all")
+          print(f"LISTDSD result: {res.strip()}")
+
+          print("=== STEP 5: Submit Validation Job ===")
           try:
-              datasets.delete(f"{USER}.JCL(RACF1)")
-          except:
-              pass
-
-          # Ensure JCL PDS exists
-          run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-
-          # Minimal JCL - no CLASS, no MSGLEVEL, just the basics
-          jcl_lines = [
-              "//RACF1 JOB",
-              "//STEP1 EXEC PGM=IKJEFT01",
-              "//SYSTSPRT DD SYSOUT=*",
-              "//SYSTSIN DD *",
-              f"ADDSD '{DATASET}' UACC(NONE)",
-              f"PERMIT '{DATASET}' ID(IBM0001) ACCESS(UPDATE)",
-              "/*"
-          ]
-          jcl_content = "\n".join(jcl_lines)
-
-          try:
-              datasets.write(f"{USER}.JCL(RACF1)", jcl_content)
-              print("JCL written successfully")
+              val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKRACF1)")
+              print(f"Validation job submitted: {val_job.job_id}")
           except Exception as e:
-              print(f"Error: {e}")
-
-          print("=== STEP 3: Submit JCL ===")
-          res = run_tso(f"submit '{USER}.JCL(RACF1)'")
-          print(f"Submit: {res.strip()}")
-
-          print("=== STEP 4: Wait ===")
-          time.sleep(30)
-
-          print("=== STEP 5: Submit validation ===")
-          res = run_tso("submit 'ZXP.PUBLIC.JCL(CHKRACF1)'")
-          print(res)
+              print(f"Validation submit error: {e}")
 
           print("=== RACF1 Complete ===")
           PYEOF
