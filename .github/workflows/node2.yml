@@ -10,33 +10,14 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
 
-      - name: Create and Start Node2 Server on z/OS USS
+      - name: Create program2.js locally (on GitHub Runner)
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'EOF'
-          
-          echo "=== Cleaning up old processes ==="
-          pkill -f "program2.js" || true
-          sleep 2
-
-          echo "=== Setting Environment for z/OS USS ==="
-          # These paths are specific to the IBM Z Xplore z/OS environment
-          export PATH=/global/node/bin:$PATH
-          export NODE_PATH=/global/node/lib/node_modules
-          
-          # Verify node is found
-          which node
-          node --version
-
-          echo "=== Creating program2.js ==="
-          mkdir -p ~/node
-          cat > ~/node/program2.js << 'JSEOF'
+          mkdir -p node
+          cat > node/program2.js << 'JSEOF'
           const http = require('http');
           const { datasets } = require("zoau");
 
-          // Use port 89674 (from Z89674)
           const port = process.env.PORT || 89674;
-          
-          // On z/OS USS, LOGNAME should be your Z-ID (Z89674)
           const myname = process.env.LOGNAME || 'Z89674'; 
 
           function sendResponse(res, content, code, type) {
@@ -52,23 +33,19 @@ jobs:
 
               console.log('Request URL:', req.url);
 
-              // Ignore favicon requests
               if (req.url === '/favicon.ico') {
                   res.statusCode = 204;
                   res.end();
                   return;
               }
 
-              // Handle root URL
               if (basic.test(req.url)) {
                   sendResponse(res, `Hello World from ${myname} on z/OS`, 200, 'text/plain');
               } 
-              // Handle /hello/<name>
               else if (hello.test(req.url)) {
                   const name = req.url.replace(/^\/hello\/([A-Za-z0-9]+).*$/, '$1');
                   sendResponse(res, `Hello ${name}!`, 200, 'text/plain');
               } 
-              // Handle /data/<member>
               else if (data.test(req.url)) {
                   const member = req.url.replace(/^\/data\/([A-Za-z0-9]+).*$/, '$1');
                   const dsn = `ZXP.PUBLIC.SOURCE(${member})`;
@@ -90,19 +67,30 @@ jobs:
               console.log(`Server running at http://0.0.0.0:${port}/`);
           });
           JSEOF
+          echo "Created program2.js locally"
 
-          echo "=== Starting Server ==="
-          # Start in background
-          PORT=89674 nohup node ~/node/program2.js > ~/node/server.log 2>&1 &
+      - name: Copy program2.js to z/OS USS
+        run: |
+          # Create the directory on z/OS first
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/node"
+          
+          # Copy the file using SCP
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no node/program2.js ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/node/program2.js
+          echo "Copied program2.js to z/OS"
+
+      - name: Start Node2 Server on z/OS USS
+        run: |
+          # Kill old processes first
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "pkill -f 'program2.js' || true"
+          sleep 2
+          
+          # Start the server with the correct PATH
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "export PATH=/global/node/bin:\$PATH; export NODE_PATH=/global/node/lib/node_modules; nohup node ~/node/program2.js > ~/node/server.log 2>&1 &"
           sleep 5
           
-          echo "=== Server Log (Check for errors) ==="
-          cat ~/node/server.log
-          
-          echo "=== Testing Connection ==="
-          # curl might not be on z/OS, so we just check if the process is running
-          ps -ef | grep program2.js | grep -v grep || echo "Process not found"
-          EOF
+          # Check if it's running
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cat ~/node/server.log"
+          echo "Server start command issued"
 
       - name: Create Python script for z/OS Validation
         run: |
@@ -128,3 +116,5 @@ jobs:
       - name: Execute validation on z/OS
         run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/validate_node2.py"
+                  
+                  
