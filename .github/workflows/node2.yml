@@ -10,7 +10,7 @@ jobs:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
 
-      - name: Create program2.js locally (on GitHub Runner)
+      - name: Create program2.js locally
         run: |
           mkdir -p node
           cat > node/program2.js << 'JSEOF'
@@ -30,8 +30,6 @@ jobs:
               const basic = /^\/$/;
               const hello = /^\/hello\//;
               const data = /^\/data\/.*/;
-
-              console.log('Request URL:', req.url);
 
               if (req.url === '/favicon.ico') {
                   res.statusCode = 204;
@@ -67,74 +65,55 @@ jobs:
               console.log(`Server running at http://0.0.0.0:${port}/`);
           });
           JSEOF
-          echo "Created program2.js locally"
 
-      - name: Copy program2.js to z/OS USS
+      - name: Create start.sh script locally
         run: |
-          # Create the directory on z/OS first
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/node"
-          
-          # Copy the file using SCP
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no node/program2.js ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/node/program2.js
-          echo "Copied program2.js to z/OS"
-
-      - name: Start Node2 Server on z/OS USS and Verify
-        run: |
-          # Run a comprehensive startup and check script
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} << 'ZOS_EOF'
-          
-          echo "=== Setting Environment ==="
+          cat > node/start.sh << 'SHEOF'
+          #!/bin/sh
+          # Set exact paths for z/OS USS Node.js
           export PATH=/global/node/bin:$PATH
           export NODE_PATH=/global/node/lib/node_modules
           
-          echo "=== Verifying Node ==="
-          which node
-          node --version
-          
-          echo "=== Preparing Script ==="
-          chmod +x ~/node/program2.js
-          
-          echo "=== Killing old processes ==="
-          ps -ef | grep program2.js | grep -v grep | awk '{print $2}' | xargs kill 2>/dev/null || true
+          # Kill any existing instances
+          ps -ef | grep program2.js | grep -v grep | awk '{print $2}' | xargs kill 2>/dev/null
           sleep 2
           
-          echo "=== Starting Server ==="
-          # Use nohup and disown to ensure it survives SSH disconnect
-          nohup node ~/node/program2.js > ~/node/server.log 2>&1 &
-          disown
+          cd ~/node
           
-          echo "=== Waiting 5 seconds for startup ==="
+          # Start server in background
+          nohup node program2.js > server.log 2>&1 &
+          
+          # Wait for startup
           sleep 5
           
-          echo "=== Server Log Output (CRITICAL) ==="
-          cat ~/node/server.log
-          
-          echo "=== Process Check ==="
-          ps -ef | grep program2.js | grep -v grep
-          
-          ZOS_EOF
+          # Print log to verify
+          echo "=== SERVER LOG ==="
+          cat server.log
+          echo "=================="
+          SHEOF
+          chmod +x node/start.sh
 
-      - name: Create Python script for z/OS Validation
+      - name: Copy files to z/OS USS
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/node"
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no node/program2.js ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/node/program2.js
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no node/start.sh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/node/start.sh
+          echo "Files copied to z/OS"
+
+      - name: Start Server and Check Logs
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "~/node/start.sh"
+
+      - name: Submit Validation Job
         run: |
           cat > validate_node2.py << 'PYEOF'
-          import subprocess
-          import time
           from zoautil_py import jobs
-
-          print("=== Submitting NODE2 Validation Job ===")
           try:
               val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKNODE2)")
               print(f"Validation job submitted: {val_job.job_id}")
           except Exception as e:
               print(f"Validation submit error: {e}")
-              
-          print("=== NODE2 Automation Complete ===")
           PYEOF
-
-      - name: Copy validation script to z/OS
-        run: |
+          
           sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no validate_node2.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/validate_node2.py
-
-      - name: Execute validation on z/OS
-        run: |
           sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/validate_node2.py"
