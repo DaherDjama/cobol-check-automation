@@ -24,25 +24,48 @@ jobs:
 
           USER = "Z89674"
           MAGIC_DS = f"{USER}.MAGIC"
+          JCL_DS = f"{USER}.JCL"
 
           print("=== STEP 1: Create Z89674.MAGIC Dataset ===")
-          # PDF says: Create a sequential(PS) dataset
+          try: datasets.delete(MAGIC_DS)
+          except: pass
           res = run_tso(f"ALLOCATE DSNAME('{MAGIC_DS}') DSORG(PS) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
-          print(f"Allocate result: {res.strip()}")
+          print(f"Allocate: {res.strip()}")
 
-          print("=== STEP 2: Add RACF Profile (UACC NONE) ===")
-          # PDF Step 9: "Create a DSD profile... with UACC(NONE). generic is not needed"
-          res = run_tso(f"addsd '{MAGIC_DS}' uacc(none)")
-          print(f"ADDSD result: {res.strip()}")
+          print("=== STEP 2: Create JCL for RACF Commands ===")
+          # Create a batch job that runs the RACF commands
+          racf_jcl = [
+              f"//RACFJOB  JOB (ACCT),'RACF SETUP',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID",
+              "//STEP1    EXEC PGM=IKJEFT01",
+              "//SYSTSPRT DD SYSOUT=*",
+              "//SYSTSIN  DD *",
+              f"  ADDSD '{MAGIC_DS}' UACC(NONE)",
+              f"  PERMIT '{MAGIC_DS}' ID(IBM0001) ACCESS(UPDATE)",
+              f"  LISTDSD DA('{MAGIC_DS}') ALL",
+              "/*"
+          ]
+          
+          try: datasets.delete(f"{JCL_DS}(RACFJOB)")
+          except: pass
+          
+          # Ensure JCL dataset exists
+          try:
+              datasets.read(f"{JCL_DS}(TEST)")
+          except:
+              run_tso(f"ALLOCATE DSNAME('{JCL_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRACKS")
+          
+          datasets.write(f"{JCL_DS}(RACFJOB)", '\n'.join(racf_jcl))
+          print("RACF JCL created")
 
-          print("=== STEP 3: Permit IBM0001 UPDATE Access ===")
-          # PDF Step 9: "Permit user IBM0001 to have write(UPDATE) access"
-          res = run_tso(f"permit '{MAGIC_DS}' id(IBM0001) access(update)")
-          print(f"PERMIT result: {res.strip()}")
+          print("=== STEP 3: Submit RACF Job ===")
+          try:
+              job = jobs.submit(f"{JCL_DS}(RACFJOB)")
+              print(f"RACF job submitted: {job.job_id}")
+          except Exception as e:
+              print(f"Submit error: {e}")
 
-          print("=== STEP 4: Verify Permissions (Optional but good for logs) ===")
-          res = run_tso(f"ld da('{MAGIC_DS}') all")
-          print(f"LISTDSD result: {res.strip()}")
+          print("=== STEP 4: Wait for RACF Job to Complete ===")
+          time.sleep(30)
 
           print("=== STEP 5: Submit Validation Job ===")
           try:
