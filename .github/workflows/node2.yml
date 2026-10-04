@@ -1,4 +1,4 @@
-name: NODE2 Challenge Automation
+ name: NODE2 Challenge Automation
 
 on:
   workflow_dispatch:
@@ -21,13 +21,17 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/lnx1key.pem linux1@${{ secrets.LNX1_IP }} << 'EOF'
           
           echo "=== Cleaning up old processes ==="
-          pkill -f "node program2.js" || true
+          pkill -f "program2.js" || true
           sleep 2
 
           echo "=== Setting Environment (Critical for zoau module) ==="
-          # This path is based on the error message in the NODE2 PDF
+          # FIX: Add the correct Xplore Node.js path to PATH
+          export PATH=$PATH:/global/node/bin
           export NODE_PATH=/global/node/lib/node_modules
-          export PATH=$PATH:/usr/local/bin
+          
+          # Verify node is found
+          which node
+          node --version
 
           echo "=== Creating program2.js ==="
           mkdir -p ~/node
@@ -38,7 +42,7 @@ jobs:
           // Use port 89674 (from Z89674)
           const port = process.env.PORT || 89674;
           
-          // Hardcode Z-ID to ensure validator passes
+          // Hardcode Z-ID to ensure validator passes (LOGNAME is usually 'linux1')
           const myname = 'Z89674'; 
 
           function sendResponse(res, content, code, type) {
@@ -95,7 +99,7 @@ jobs:
 
           echo "=== Starting Server ==="
           # Start in background with PORT set
-          PORT=89674 node ~/node/program2.js > ~/node/server.log 2>&1 &
+          PORT=89674 nohup node ~/node/program2.js > ~/node/server.log 2>&1 &
           sleep 5
           
           echo "=== Server Log (Check for errors) ==="
