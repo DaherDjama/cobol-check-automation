@@ -17,7 +17,8 @@ jobs:
           const http = require('http');
           const { datasets } = require("zoau");
 
-          const port = process.env.PORT || 89674;
+          // FIX: Changed port to 8080 because 89674 > 65535
+          const port = process.env.PORT || 8080;
           const myname = process.env.LOGNAME || 'Z89674'; 
 
           function sendResponse(res, content, code, type) {
@@ -76,6 +77,8 @@ jobs:
           # 1. Setup Environment
           os.environ['PATH'] = '/global/node/bin:' + os.environ.get('PATH', '')
           os.environ['NODE_PATH'] = '/global/node/lib/node_modules'
+          # FIX: Set PORT to 8080
+          os.environ['PORT'] = '8080'
 
           # 2. Kill old processes
           print("Killing old processes...")
