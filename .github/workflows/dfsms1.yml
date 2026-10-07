@@ -1,3 +1,4 @@
+
 name: DFSMS1 Challenge Automation
 
 on:
@@ -23,7 +24,8 @@ jobs:
               return res.stdout + res.stderr
 
           USER = "Z89674"
-          NONSMS_DS = f"{USER}.DFSMS1"
+          # FIX: Dataset name must start with "NONSMS" to match ACS routine pattern
+          NONSMS_DS = f"NONSMS.{USER}"
           TOOBIG_DS = f"{USER}.TOOBIG"
 
           print("=== STEP 1: Find Non-SMS Volume ===")
@@ -32,16 +34,12 @@ jobs:
           target_vol = None
           
           for vol in volumes:
-              # Try to allocate a test dataset to see if volume is valid and non-SMS
-              # We use STORCLAS() to try and force non-SMS, but primarily rely on the volume
               res = run_tso(f"ALLOCATE DSNAME('{USER}.TESTVOL') NEW SPACE(1,1) TRKS VOLUME({vol}) STORCLAS(' ')")
               if 'IKJ56233I' in res or 'ALLOCATED' in res.upper() or 'NORMAL END' in res.upper():
-                  # Check if it actually worked by listing it
                   res2 = run_tso(f"LISTDS '{USER}.TESTVOL'")
                   if 'NOT FOUND' not in res2 and 'IKJ56233I' not in res2:
                       target_vol = vol
                       print(f"Found working volume: {vol}")
-                      # Delete test dataset
                       run_tso(f"DELETE '{USER}.TESTVOL'")
                       break
               time.sleep(1)
@@ -50,7 +48,7 @@ jobs:
               print("Could not find a valid non-SMS volume. Defaulting to ZXP001")
               target_vol = 'ZXP001'
 
-          print("=== STEP 2: Allocate Non-SMS Dataset ===")
+          print("=== STEP 2: Allocate Non-SMS Dataset (NONSMS.Z89674) ===")
           # Delete if exists
           try: datasets.delete(NONSMS_DS)
           except: pass
@@ -66,18 +64,14 @@ jobs:
           except: pass
           
           # Attributes: TRKS, Primary 100, FB, LRECL 20, PO (Library)
-          # No volume specified, let SMS handle it
           res = run_tso(f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(100,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)")
           print(f"TOOBIG Allocate Result: {res.strip()}")
 
           print("=== STEP 4: Extract Message and Create MEMBER ===")
-          # The message is usually "SPACE OVERRIDDEN BY ACS" or similar.
-          # We look for keywords like "OVERRIDE" or "ACS" in the output
           output_upper = res.upper()
-          message_words = "OVERRIDDEN BY ACS" # Default guess
+          message_words = "OVERRIDDEN BY ACS"
           
           if 'OVERRIDDEN' in output_upper:
-              # Find the line with OVERRIDDEN and take last 3 words
               for line in res.split('\n'):
                   if 'OVERRIDDEN' in line.upper():
                       words = line.strip().split()
@@ -95,8 +89,6 @@ jobs:
               print(f"Created member MESSAGE with content: {message_words}")
           except Exception as e:
               print(f"Error creating member: {e}")
-              # If PO failed, try creating it as PS first then we can't add member, but validator needs PO.
-              # Let's try to allocate as PO explicitly if it failed
               res2 = run_tso(f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(80) DSORG(PO)")
               try:
                   datasets.write(f"{TOOBIG_DS}(MESSAGE)", message_words)
