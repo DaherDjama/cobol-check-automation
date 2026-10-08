@@ -1,4 +1,3 @@
-
 name: DFSMS1 Challenge Automation
 
 on:
@@ -16,12 +15,8 @@ jobs:
           cat > dfsms1.py << 'PYEOF'
           import subprocess
           import time
+          import textwrap
           from zoautil_py import datasets, jobs
-
-          def run_tso(cmd):
-              full_cmd = f'tso "{cmd}"'
-              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
-              return res.stdout + res.stderr
 
           USER = "Z89674"
           NONSMS_DS = f"NONSMS.{USER}"
@@ -34,54 +29,103 @@ jobs:
           except: pass
           time.sleep(2)
 
-          print("=== STEP 2: Find Non-SMS Volume and Allocate NONSMS Dataset ===")
-          # Try a wider range of volumes
-          volumes = ['ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005', 
-                     'ZXP006', 'ZXP007', 'ZXP008', 'ZXP009', 'ZXP010',
-                     'ZXP01', 'ZXP02', 'ZXP03', 'ZXP04', 'ZXP05']
+          print("=== STEP 2: Allocate NONSMS Dataset via JCL ===")
+          # Try JCL with STORCLAS='' (empty string) - this is the correct JCL syntax
+          # Try multiple volumes
+          volumes = ['ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005',
+                     'ZXP006', 'ZXP007', 'ZXP008', 'ZXP009', 'ZXP010']
           
           success = False
           for vol in volumes:
               print(f"Trying volume {vol}...")
-              # For non-SMS: no STORCLAS, no DATACLAS, no MGMTCLAS
-              # Use UNIT=3390 instead of SYSDA for non-SMS
-              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) UNIT(3390) VOLUME({vol})"
-              res = run_tso(cmd)
+              nonsms_jcl = textwrap.dedent(f"""
+                  //NONSMS   JOB (ACCT),'NONSMS ALLOC',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
+                  //STEP1    EXEC PGM=IEFBR14
+                  //DD1      DD DSN={NONSMS_DS},
+                  //            DISP=(NEW,CATLG,DELETE),
+                  //            UNIT=SYSDA,
+                  //            SPACE=(TRK,(5,1)),
+                  //            RECFM=FB,LRECL=20,DSORG=PS,
+                  //            STORCLAS='',
+                  //            VOL=SER={vol}
+                  //
+              """)
               
-              # Check if dataset exists
-              ds_list = datasets.list_datasets(NONSMS_DS)
-              if ds_list:
-                  print(f"SUCCESS with volume {vol}!")
-                  success = True
-                  break
-              else:
-                  print(f"Failed on {vol}")
-              time.sleep(1)
+              try:
+                  datasets.write(f"{USER}.JCL(NONSM{vol[-3:]})", nonsms_jcl)
+                  job = jobs.submit(f"{USER}.JCL(NONSM{vol[-3:]})")
+                  print(f"Submitted job for {vol}: {job.job_id}")
+                  time.sleep(10)
+                  
+                  # Check if dataset exists
+                  ds_list = datasets.list_datasets(NONSMS_DS)
+                  if ds_list:
+                      print(f"SUCCESS with volume {vol}!")
+                      success = True
+                      break
+                  else:
+                      print(f"Failed on {vol}")
+              except Exception as e:
+                  print(f"Error with {vol}: {e}")
+              time.sleep(2)
 
           if not success:
-              print("All specific volumes failed. Trying without volume (name pattern only)...")
-              # Try without volume - ACS routine should handle it based on NONSMS.* pattern
-              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) UNIT(3390)"
-              res = run_tso(cmd)
-              print(f"Result: {res.strip()[:100]}")
-              ds_list = datasets.list_datasets(NONSMS_DS)
-              if ds_list:
-                  success = True
-                  print("Success without specific volume!")
+              print("All specific volumes failed. Trying without volume...")
+              nonsms_jcl_novol = textwrap.dedent(f"""
+                  //NONSMS   JOB (ACCT),'NONSMS ALLOC',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
+                  //STEP1    EXEC PGM=IEFBR14
+                  //DD1      DD DSN={NONSMS_DS},
+                  //            DISP=(NEW,CATLG,DELETE),
+                  //            UNIT=SYSDA,
+                  //            SPACE=(TRK,(5,1)),
+                  //            RECFM=FB,LRECL=20,DSORG=PS,
+                  //            STORCLAS=''
+                  //
+              """)
+              try:
+                  datasets.write(f"{USER}.JCL(NONSMSNV)", nonsms_jcl_novol)
+                  job = jobs.submit(f"{USER}.JCL(NONSMSNV)")
+                  print(f"Submitted job without volume: {job.job_id}")
+                  time.sleep(10)
+                  ds_list = datasets.list_datasets(NONSMS_DS)
+                  if ds_list:
+                      success = True
+                      print("Success without specific volume!")
+              except Exception as e:
+                  print(f"Error without volume: {e}")
 
           if not success:
-              print("WARNING: NONSMS dataset not created. Validator will fail.")
+              print("WARNING: NONSMS dataset not created. Trying TSO ALLOCATE with STORCLAS('')...")
+              # Last resort: try TSO with STORCLAS('') - single quotes with nothing inside
+              for vol in ['ZXP001', 'ZXP002', 'ZXP003']:
+                  cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) STORCLAS('') VOLUME({vol})"
+                  res = subprocess.run(f'tso "{cmd}"', shell=True, capture_output=True, encoding='latin-1', errors='replace')
+                  print(f"TSO attempt {vol}: {res.stdout.strip()[:100]}")
+                  ds_list = datasets.list_datasets(NONSMS_DS)
+                  if ds_list:
+                      success = True
+                      print(f"TSO SUCCESS with {vol}!")
+                      break
+                  time.sleep(2)
 
           print("=== STEP 3: Allocate TOOBIG Dataset ===")
-          # SMS-managed, no volume specified
-          cmd_toobig = f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(100,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
-          res_toobig = run_tso(cmd_toobig)
-          print(f"TOOBIG Result: {res_toobig.strip()[:100]}")
-
-          # Fallback if failed
-          if 'RC(12)' in res_toobig or 'RC(012)' in res_toobig:
-              print("TOOBIG failed, trying smaller space...")
-              run_tso(f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(80) DSORG(PO)")
+          toobig_jcl = textwrap.dedent(f"""
+              //TOOBIG   JOB (ACCT),'TOOBIG ALLOC',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
+              //STEP1    EXEC PGM=IEFBR14
+              //DD1      DD DSN={TOOBIG_DS},
+              //            DISP=(NEW,CATLG,DELETE),
+              //            UNIT=SYSDA,
+              //            SPACE=(TRK,(100,1)),
+              //            RECFM=FB,LRECL=20,DSORG=PO
+              //
+          """)
+          try:
+              datasets.write(f"{USER}.JCL(TOOBIG)", toobig_jcl)
+              job = jobs.submit(f"{USER}.JCL(TOOBIG)")
+              print(f"TOOBIG job submitted: {job.job_id}")
+              time.sleep(10)
+          except Exception as e:
+              print(f"TOOBIG error: {e}")
 
           print("=== STEP 4: Create MESSAGE Member ===")
           message_words = "OVERRIDDEN BY ACS"
