@@ -13,61 +13,61 @@ jobs:
       - name: Create Spy Script
         run: |
           cat > spy.py << 'PYEOF'
-          import subprocess
           from zoautil_py import datasets
 
-          def run_tso(cmd):
-              full_cmd = f'tso "{cmd}"'
-              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
-              return res.stdout + res.stderr
-
-          print("=== PHASE 1: Find ACS Source Code ===")
-          # List all datasets starting with ZXP.PUBLIC
-          ds_list = datasets.list_datasets("ZXP.PUBLIC.*")
-          print(f"Found datasets: {ds_list}")
-
-          # Look for the source code (members with $)
-          for ds in ds_list:
-              print(f"\nChecking {ds}...")
-              try:
-                  # Try to list members
-                  members = datasets.list_members(ds)
-                  print(f"Members: {members}")
-                  
-                  # Read members that contain $
-                  for m in members:
-                      if '$' in m:
-                          print(f"\n--- READING MEMBER {m} ---")
-                          content = datasets.read(f"{ds}({m})")
-                          print(content)
-                          print(f"--- END MEMBER {m} ---")
-              except Exception as e:
-                  print(f"Error accessing {ds}: {e}")
-
-          print("\n=== PHASE 2: Try Allocation with Discovered Info ===")
-          # Based on PDF, the name is likely NONSMS.Z89674
-          # We will try to allocate it. 
-          # The PDF says "a blank storage class('') results in non-SMS".
-          # If the ACS routine is set up for NONSMS.*, it should handle it.
+          print("=== PHASE 1: Read ACS Source Code ===")
+          source_ds = "ZXP.PUBLIC.SOURCE"
           
+          try:
+              print(f"Listing members of {source_ds}...")
+              # list_members expects a string, not a Dataset object
+              members = datasets.list_members(source_ds)
+              print(f"Members found: {members}")
+              
+              # Look for members with '$' in the name (as per PDF hint)
+              for m in members:
+                  if '$' in m:
+                      print(f"\n{'='*60}")
+                      print(f"READING MEMBER: {m}")
+                      print(f"{'='*60}")
+                      # Read the content of the member
+                      content = datasets.read(f"{source_ds}({m})")
+                      print(content)
+                      print(f"{'='*60}")
+                      print(f"END OF MEMBER: {m}")
+                      print(f"{'='*60}\n")
+          except Exception as e:
+              print(f"Error reading source: {e}")
+              import traceback
+              traceback.print_exc()
+
+          print("\n=== PHASE 2: Try Allocation ===")
           USER = "Z89674"
           NONSMS_DS = f"NONSMS.{USER}"
           
-          # Cleanup
-          try: datasets.delete(NONSMS_DS)
-          except: pass
+          # Cleanup old dataset
+          try: 
+              datasets.delete(NONSMS_DS)
+              print(f"Deleted old {NONSMS_DS}")
+          except: 
+              pass
 
-          # Try allocating without volume first (let ACS handle it completely)
-          print("Trying allocation without volume (ACS should handle NONSMS.*)...")
+          # Try allocation without volume (let ACS handle it)
+          print("Trying allocation without volume...")
+          import subprocess
+          def run_tso(cmd):
+              res = subprocess.run(f'tso "{cmd}"', shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              return res.stdout + res.stderr
+
           cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS)"
           res = run_tso(cmd)
-          print(f"Result: {res.strip()[:200]}")
+          print(f"TSO Result: {res.strip()}")
           
           ds_check = datasets.list_datasets(NONSMS_DS)
           if ds_check:
               print("SUCCESS! Dataset created without specific volume.")
           else:
-              print("Failed without volume. The ACS source code above should tell us the correct volume.")
+              print("Failed. Check the source code above for the correct volume name.")
 
           PYEOF
 
