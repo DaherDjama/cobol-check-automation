@@ -33,69 +33,81 @@ jobs:
           except: pass
           time.sleep(1)
 
-          print("=== STEP 2: Find Non-SMS Volumes via SDSF ===")
-          # Use SDSF to run D SMS,VOL(*) command to list all volumes
-          sdsf_cmd = """
-          ulog
-          /d sms,vol(*)
-          """
-          res = run_tso(f"PROFILE PREFIX({USER})")
-          print(f"Profile set: {res.strip()[:100]}")
-          
-          # Try to list volumes via TSO
-          res = run_tso("D SMS,VOL(*)")
-          print(f"D SMS output: {res.strip()[:500]}")
+          print("=== STEP 2: Find Non-SMS Volume via SDSF ===")
+          # Use SDSF to run /d sms,vol(*) command
+          # First, create a JCL job that runs the command and captures output
+          sdsf_jcl = f"""//SDSFVOL  JOB (ACCT),'SDSF VOL',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
+//STEP1    EXEC PGM=SDSF
+//ISFOUT   DD SYSOUT=*
+//ISFIN    DD *
+  /d sms,vol(*)
+  exit
+/*
+"""
+          try:
+              datasets.write(f"{USER}.JCL(SDSFVOL)", sdsf_jcl)
+              job = jobs.submit(f"{USER}.JCL(SDSFVOL)")
+              print(f"SDSF job submitted: {job.job_id}")
+              time.sleep(10)
+              
+              # Read the output
+              output = jobs.read_output(job.job_id)
+              for item in output:
+                  content = item.get('content', '')
+                  if 'ZXP' in content:
+                      print(f"Found volume info: {content[:500]}")
+          except Exception as e:
+              print(f"SDSF error: {e}")
 
           print("=== STEP 3: Allocate NONSMS Dataset ===")
-          # Try with STORCLAS('') (empty string, no space) - this is what PDF shows
-          volumes = ['ZXP001', 'ZXP002', 'ZXP003', 'ZXP000', 'ZXP004', 'ZXP005']
+          # Try multiple approaches
           success = False
           
-          for vol in volumes:
-              print(f"Trying {vol} with STORCLAS('')...")
-              # Use STORCLAS('') - empty string, NO space inside quotes
-              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol}) STORCLAS('')"
-              res = run_tso(cmd)
-              
-              # Check if it worked
-              ds_list = datasets.list_datasets(NONSMS_DS)
-              if ds_list:
-                  print(f"SUCCESS with volume {vol}!")
-                  success = True
-                  break
-              else:
-                  print(f"Failed on {vol}: {res.strip()[:100]}")
-              time.sleep(1)
+          # Approach 1: Try without volume (let ACS handle it based on NONSMS.* pattern)
+          print("Trying without volume...")
+          cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS)"
+          res = run_tso(cmd)
+          ds_list = datasets.list_datasets(NONSMS_DS)
+          if ds_list:
+              print("SUCCESS without volume!")
+              success = True
+          else:
+              print(f"Failed without volume: {res.strip()[:100]}")
 
+          # Approach 2: Try with STORCLAS('') on common volumes
           if not success:
-              print("Trying without volume (let ACS handle it)...")
-              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) STORCLAS('')"
-              res = run_tso(cmd)
-              ds_list = datasets.list_datasets(NONSMS_DS)
-              if ds_list:
-                  success = True
-                  print("Success without specific volume!")
-              else:
-                  print(f"Failed without volume: {res.strip()[:100]}")
-
-          if not success:
-              print("Trying with STORCLAS(' ') (with space)...")
-              for vol in ['ZXP001', 'ZXP002', 'ZXP003']:
-                  cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol}) STORCLAS(' ')"
+              volumes = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005',
+                         'WORK01', 'USER01', 'SYSRES']
+              for vol in volumes:
+                  print(f"Trying {vol} with STORCLAS('')...")
+                  cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol}) STORCLAS('')"
                   res = run_tso(cmd)
                   ds_list = datasets.list_datasets(NONSMS_DS)
                   if ds_list:
+                      print(f"SUCCESS with {vol}!")
                       success = True
-                      print(f"Success with {vol} and STORCLAS(' ')!")
                       break
                   time.sleep(1)
+
+          # Approach 3: Try with UNIT=3390 (direct access, might bypass SMS)
+          if not success:
+              print("Trying with UNIT=3390...")
+              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) UNIT(3390)"
+              res = run_tso(cmd)
+              ds_list = datasets.list_datasets(NONSMS_DS)
+              if ds_list:
+                  print("SUCCESS with UNIT=3390!")
+                  success = True
+
+          if not success:
+              print("WARNING: NONSMS dataset not created")
 
           print("=== STEP 4: Allocate TOOBIG Dataset ===")
           cmd_toobig = f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(100,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
           res_toobig = run_tso(cmd_toobig)
           print(f"TOOBIG Result: {res_toobig.strip()[:100]}")
 
-          if 'RC(12)' in res_toobig or 'RC(012)' in res_toobig:
+          if 'RC(12)' in res_toobig:
               print("TOOBIG failed, trying smaller space...")
               run_tso(f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(80) DSORG(PO)")
 
