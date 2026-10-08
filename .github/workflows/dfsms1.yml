@@ -1,3 +1,4 @@
+
 name: DFSMS1 Challenge Automation
 
 on:
@@ -18,9 +19,24 @@ jobs:
           import textwrap
           from zoautil_py import datasets, jobs
 
+          def run_tso(cmd):
+              full_cmd = f'tso "{cmd}"'
+              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              return res.stdout + res.stderr
+
           USER = "Z89674"
           NONSMS_DS = f"NONSMS.{USER}"
           TOOBIG_DS = f"{USER}.TOOBIG"
+          JCL_DS = f"{USER}.JCL"
+
+          print("=== STEP 0: Ensure JCL PDS Exists ===")
+          # Check if Z89674.JCL exists, if not create it
+          ds_list = datasets.list_datasets(JCL_DS)
+          if not ds_list:
+              print("Creating JCL PDS...")
+              run_tso(f"ALLOCATE DSNAME('{JCL_DS}') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(10,1) TRKS")
+          else:
+              print("JCL PDS already exists.")
 
           print("=== STEP 1: Cleanup Old Datasets ===")
           try: datasets.delete(NONSMS_DS)
@@ -33,11 +49,15 @@ jobs:
           # Try common non-SMS volumes. 
           # CRITICAL: Use STORCLAS= (blank) for non-SMS allocation in JCL.
           volumes_to_try = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005', 
-                            'ZXP006', 'ZXP007', 'ZXP008', 'ZXP009', 'ZXP010', 'WORK01', 'USER01']
+                            'ZXP006', 'ZXP007', 'ZXP008', 'ZXP009', 'ZXP010']
           
           success = False
           for vol in volumes_to_try:
               print(f"\n--- Trying volume {vol} ---")
+              
+              # FIX: Member name must be <= 8 chars. 'NS' + last 3 chars of volume (e.g., NS001)
+              member_name = f"NS{vol[-3:]}" 
+              
               # JCL with STORCLAS= (blank) to force non-SMS
               nonsms_jcl = textwrap.dedent(f"""
                   //NONSMS   JOB (ACCT),'NONSMS',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
@@ -54,35 +74,21 @@ jobs:
               
               try:
                   # Write JCL member
-                  member_name = f"NONSM{vol[:4]}"
-                  datasets.write(f"{USER}.JCL({member_name})", nonsms_jcl)
+                  datasets.write(f"{JCL_DS}({member_name})", nonsms_jcl)
+                  print(f"Wrote JCL to member {member_name}")
                   
                   # Submit job
-                  job = jobs.submit(f"{USER}.JCL({member_name})")
+                  job = jobs.submit(f"{JCL_DS}({member_name})")
                   job_id = job.job_id
                   print(f"Submitted job {job_id} for volume {vol}")
                   
                   # Wait for job to complete
                   time.sleep(15)
                   
-                  # Read job output (JES log) to see errors
-                  print(f"Reading output for {job_id}...")
-                  try:
-                      # read_output returns a list of dicts: [{'ddname': '...', 'content': '...'}]
-                      output_list = jobs.read_output(job_id)
-                      for item in output_list:
-                          ddname = item.get('ddname', '')
-                          content = item.get('content', '')
-                          # Print JESMSGLG and JESYSMSG which contain errors
-                          if 'JES' in ddname or 'SYS' in ddname:
-                              print(f"[{ddname}]: {content[:500]}") # Print first 500 chars
-                  except Exception as e:
-                      print(f"Could not read output: {e}")
-                  
                   # Check if dataset exists
-                  ds_list = datasets.list_datasets(NONSMS_DS)
-                  if ds_list:
-                      print(f"SUCCESS with volume {vol}!")
+                  ds_list_check = datasets.list_datasets(NONSMS_DS)
+                  if ds_list_check:
+                      print(f"SUCCESS with volume {vol}! Dataset created.")
                       success = True
                       break
                   else:
@@ -92,10 +98,11 @@ jobs:
               time.sleep(3)
 
           if not success:
-              print("\nWARNING: Could not find non-SMS volume. Trying without STORCLAS parameter...")
-              # Fallback: Try without STORCLAS parameter at all
+              print("\nWARNING: Could not find non-SMS volume with STORCLAS=. Trying without STORCLAS parameter...")
+              # Fallback: Try without STORCLAS parameter at all (let ACS handle it based on name NONSMS.*)
               for vol in ['ZXP000', 'ZXP001', 'ZXP002']:
                   print(f"Trying {vol} without STORCLAS...")
+                  member_name = f"NS2{vol[-3:]}"
                   nonsms_jcl2 = textwrap.dedent(f"""
                       //NONSMS   JOB (ACCT),'NONSMS',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
                       //STEP1    EXEC PGM=IEFBR14
@@ -108,12 +115,11 @@ jobs:
                       //
                   """)
                   try:
-                      member_name = f"NONSM2{vol[:4]}"
-                      datasets.write(f"{USER}.JCL({member_name})", nonsms_jcl2)
-                      job = jobs.submit(f"{USER}.JCL({member_name})")
+                      datasets.write(f"{JCL_DS}({member_name})", nonsms_jcl2)
+                      job = jobs.submit(f"{JCL_DS}({member_name})")
                       time.sleep(10)
-                      ds_list = datasets.list_datasets(NONSMS_DS)
-                      if ds_list:
+                      ds_list_check = datasets.list_datasets(NONSMS_DS)
+                      if ds_list_check:
                           print(f"SUCCESS with {vol} (no STORCLAS)!")
                           success = True
                           break
@@ -132,8 +138,8 @@ jobs:
               //
           """)
           try:
-              datasets.write(f"{USER}.JCL(TOOBIG)", toobig_jcl)
-              job = jobs.submit(f"{USER}.JCL(TOOBIG)")
+              datasets.write(f"{JCL_DS}(TOOBIG)", toobig_jcl)
+              job = jobs.submit(f"{JCL_DS}(TOOBIG)")
               print(f"TOOBIG job submitted: {job.job_id}")
               time.sleep(10)
           except Exception as e:
