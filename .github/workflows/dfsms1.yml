@@ -13,61 +13,92 @@ jobs:
       - name: Create Spy Script
         run: |
           cat > spy.py << 'PYEOF'
+          import subprocess
           from zoautil_py import datasets
 
-          print("=== PHASE 1: Read ACS Source Code ===")
-          source_ds = "ZXP.PUBLIC.SOURCE"
-          
-          try:
-              print(f"Listing members of {source_ds}...")
-              # list_members expects a string, not a Dataset object
-              members = datasets.list_members(source_ds)
-              print(f"Members found: {members}")
-              
-              # Look for members with '$' in the name (as per PDF hint)
-              for m in members:
-                  if '$' in m:
-                      print(f"\n{'='*60}")
-                      print(f"READING MEMBER: {m}")
-                      print(f"{'='*60}")
-                      # Read the content of the member
-                      content = datasets.read(f"{source_ds}({m})")
-                      print(content)
-                      print(f"{'='*60}")
-                      print(f"END OF MEMBER: {m}")
-                      print(f"{'='*60}\n")
-          except Exception as e:
-              print(f"Error reading source: {e}")
-              import traceback
-              traceback.print_exc()
-
-          print("\n=== PHASE 2: Try Allocation ===")
-          USER = "Z89674"
-          NONSMS_DS = f"NONSMS.{USER}"
-          
-          # Cleanup old dataset
-          try: 
-              datasets.delete(NONSMS_DS)
-              print(f"Deleted old {NONSMS_DS}")
-          except: 
-              pass
-
-          # Try allocation without volume (let ACS handle it)
-          print("Trying allocation without volume...")
-          import subprocess
           def run_tso(cmd):
               res = subprocess.run(f'tso "{cmd}"', shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
-          cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS)"
-          res = run_tso(cmd)
-          print(f"TSO Result: {res.strip()}")
+          print("=== PHASE 1: Search for ACS Source Code ===")
           
-          ds_check = datasets.list_datasets(NONSMS_DS)
-          if ds_check:
-              print("SUCCESS! Dataset created without specific volume.")
-          else:
-              print("Failed. Check the source code above for the correct volume name.")
+          # Search for datasets that might contain ACS source
+          search_patterns = ["ZXP.PUBLIC.*", "ZXP.*.PARMLIB", "ZXP.*.ACS", "SYS1.PARMLIB"]
+          for pattern in search_patterns:
+              print(f"\nSearching for {pattern}...")
+              try:
+                  ds_list = datasets.list_datasets(pattern)
+                  for ds in ds_list:
+                      ds_name = ds.name if hasattr(ds, 'name') else str(ds)
+                      print(f"Found: {ds_name}")
+                      try:
+                          members = datasets.list_members(ds_name)
+                          print(f"  Members: {members[:10]}...")  # First 10
+                          # Look for members with $ in name
+                          for m in members:
+                              if '$' in m:
+                                  print(f"  *** FOUND $ MEMBER: {m} ***")
+                                  content = datasets.read(f"{ds_name}({m})")
+                                  print(f"  Content:\n{content}")
+                      except Exception as e:
+                          print(f"  Error: {e}")
+              except Exception as e:
+                  print(f"Error: {e}")
+
+          print("\n=== PHASE 2: Read ZXP.PUBLIC.SOURCE Members (look for $ in content) ===")
+          source_ds = "ZXP.PUBLIC.SOURCE"
+          try:
+              members = datasets.list_members(source_ds)
+              print(f"Members: {members}")
+              for m in members:
+                  content = datasets.read(f"{source_ds}({m})")
+                  if '$' in content:
+                      print(f"\n{'='*60}")
+                      print(f"FOUND $ IN MEMBER: {m}")
+                      print(f"{'='*60}")
+                      print(content[:2000])  # First 2000 chars
+                      print(f"{'='*60}\n")
+          except Exception as e:
+              print(f"Error: {e}")
+
+          print("\n=== PHASE 3: Try SDSF /d sms command ===")
+          # Try to run /d sms via SDSF
+          res = run_tso("PROFILE PREFIX(Z89674)")
+          print(f"Profile: {res.strip()[:100]}")
+          
+          # Try different ways to run the command
+          for cmd in ["D SMS,VOL(*)", "/d sms,vol(*)", "D SMS"]:
+              print(f"\nTrying: {cmd}")
+              res = run_tso(cmd)
+              print(f"Result: {res.strip()[:500]}")
+
+          print("\n=== PHASE 4: Try More Volume Names ===")
+          USER = "Z89674"
+          NONSMS_DS = f"NONSMS.{USER}"
+          try: datasets.delete(NONSMS_DS)
+          except: pass
+
+          # Try even more volume names
+          volumes = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005',
+                     'ZXP006', 'ZXP007', 'ZXP008', 'ZXP009', 'ZXP010',
+                     'WORK01', 'WORK02', 'USER01', 'USER02', 'SYSRES', 'RES001',
+                     'VOL001', 'VOL002', 'TSS001', 'DB2001', 'CICS01', 'IMS001',
+                     'ZOS001', 'MAIN01', 'DISK01', 'STOR01', 'DATA01']
+          
+          success = False
+          for vol in volumes:
+              print(f"Trying {vol}...")
+              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol})"
+              res = run_tso(cmd)
+              ds_check = datasets.list_datasets(NONSMS_DS)
+              if ds_check:
+                  print(f"SUCCESS with {vol}!")
+                  success = True
+                  break
+              time.sleep(0.5)
+
+          if not success:
+              print("All volumes failed. Need to find the correct non-SMS volume from ACS source.")
 
           PYEOF
 
