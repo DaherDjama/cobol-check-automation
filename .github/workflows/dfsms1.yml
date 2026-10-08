@@ -33,17 +33,28 @@ jobs:
           except: pass
           time.sleep(1)
 
-          print("=== STEP 2: Allocate NONSMS Dataset (Fast TSO Method) ===")
-          # Try common non-SMS volumes quickly using TSO ALLOCATE
-          # PDF Hint: "a blank storage class('') results in non-SMS"
-          # In TSO, STORCLAS(' ') (with a space) is the syntax for blank.
-          volumes = ['ZXP001', 'ZXP002', 'ZXP003', 'ZXP000']
+          print("=== STEP 2: Find Non-SMS Volumes via SDSF ===")
+          # Use SDSF to run D SMS,VOL(*) command to list all volumes
+          sdsf_cmd = """
+          ulog
+          /d sms,vol(*)
+          """
+          res = run_tso(f"PROFILE PREFIX({USER})")
+          print(f"Profile set: {res.strip()[:100]}")
+          
+          # Try to list volumes via TSO
+          res = run_tso("D SMS,VOL(*)")
+          print(f"D SMS output: {res.strip()[:500]}")
+
+          print("=== STEP 3: Allocate NONSMS Dataset ===")
+          # Try with STORCLAS('') (empty string, no space) - this is what PDF shows
+          volumes = ['ZXP001', 'ZXP002', 'ZXP003', 'ZXP000', 'ZXP004', 'ZXP005']
           success = False
           
           for vol in volumes:
-              print(f"Trying {vol}...")
-              # Use STORCLAS(' ') for blank storage class
-              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol}) STORCLAS(' ')"
+              print(f"Trying {vol} with STORCLAS('')...")
+              # Use STORCLAS('') - empty string, NO space inside quotes
+              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol}) STORCLAS('')"
               res = run_tso(cmd)
               
               # Check if it worked
@@ -53,31 +64,42 @@ jobs:
                   success = True
                   break
               else:
-                  print(f"Failed on {vol}")
+                  print(f"Failed on {vol}: {res.strip()[:100]}")
               time.sleep(1)
 
           if not success:
-              print("Specific volumes failed. Trying without volume (let ACS handle it)...")
-              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) STORCLAS(' ')"
+              print("Trying without volume (let ACS handle it)...")
+              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) STORCLAS('')"
               res = run_tso(cmd)
               ds_list = datasets.list_datasets(NONSMS_DS)
               if ds_list:
                   success = True
                   print("Success without specific volume!")
+              else:
+                  print(f"Failed without volume: {res.strip()[:100]}")
 
-          print("=== STEP 3: Allocate TOOBIG Dataset ===")
-          # SMS-managed, no volume, 100 tracks, PDS/E (Library)
-          # Use DSORG(PO) for PDS, ACS will override to PDS/E
+          if not success:
+              print("Trying with STORCLAS(' ') (with space)...")
+              for vol in ['ZXP001', 'ZXP002', 'ZXP003']:
+                  cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol}) STORCLAS(' ')"
+                  res = run_tso(cmd)
+                  ds_list = datasets.list_datasets(NONSMS_DS)
+                  if ds_list:
+                      success = True
+                      print(f"Success with {vol} and STORCLAS(' ')!")
+                      break
+                  time.sleep(1)
+
+          print("=== STEP 4: Allocate TOOBIG Dataset ===")
           cmd_toobig = f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(100,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
           res_toobig = run_tso(cmd_toobig)
           print(f"TOOBIG Result: {res_toobig.strip()[:100]}")
 
-          # Fallback if 100 tracks fails
           if 'RC(12)' in res_toobig or 'RC(012)' in res_toobig:
               print("TOOBIG failed, trying smaller space...")
               run_tso(f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(80) DSORG(PO)")
 
-          print("=== STEP 4: Create MESSAGE Member ===")
+          print("=== STEP 5: Create MESSAGE Member ===")
           message_words = "OVERRIDDEN BY ACS"
           try:
               datasets.write(f"{TOOBIG_DS}(MESSAGE)", message_words)
@@ -85,7 +107,7 @@ jobs:
           except Exception as e:
               print(f"Error creating member: {e}")
 
-          print("=== STEP 5: Submit Validation Job ===")
+          print("=== STEP 6: Submit Validation Job ===")
           time.sleep(3)
           try:
               val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKSMS1)")
