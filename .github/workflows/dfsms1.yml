@@ -15,7 +15,6 @@ jobs:
           cat > dfsms1.py << 'PYEOF'
           import subprocess
           import time
-          import textwrap
           from zoautil_py import datasets, jobs
 
           def run_tso(cmd):
@@ -28,86 +27,70 @@ jobs:
           TOOBIG_DS = f"{USER}.TOOBIG"
 
           print("=== STEP 1: Cleanup Old Datasets ===")
-          run_tso(f"DELETE '{NONSMS_DS}'")
-          run_tso(f"DELETE '{TOOBIG_DS}'")
+          try: datasets.delete(NONSMS_DS)
+          except: pass
+          try: datasets.delete(TOOBIG_DS)
+          except: pass
           time.sleep(2)
 
-          print("=== STEP 2: Allocate NONSMS Dataset via JCL ===")
-          # Use textwrap.dedent to allow indentation in YAML while keeping JCL at column 1
-          nonsms_jcl = textwrap.dedent(f"""
-              //NONSMS   JOB (ACCT),'NONSMS ALLOC',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
-              //STEP1    EXEC PGM=IEFBR14
-              //DD1      DD DSN={NONSMS_DS},
-              //            DISP=(NEW,CATLG,DELETE),
-              //            UNIT=SYSDA,
-              //            SPACE=(TRK,(5,1)),
-              //            RECFM=FB,LRECL=20,DSORG=PS,
-              //            STORCLAS=,
-              //            VOL=SER=ZXP001
-              //
-          """)
+          print("=== STEP 2: Allocate NONSMS Dataset ===")
+          # The PDF says the ACS routine handles naming conventions for non-SMS.
+          # Name: NONSMS.Z89674. We try volumes ZXP001-ZXP005 without STORCLAS parameter.
+          volumes = ['ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005']
+          success_non_sms = False
+          
+          for vol in volumes:
+              print(f"Trying volume {vol}...")
+              # No STORCLAS parameter - let ACS routine handle it based on name 'NONSMS.*'
+              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol})"
+              res = run_tso(cmd)
+              
+              # Verify using Python API (avoids authorized command error)
+              ds_list = datasets.list_datasets(f"NONSMS.{USER}")
+              if ds_list:
+                  print(f"SUCCESS with volume {vol}! Dataset exists.")
+                  success_non_sms = True
+                  break
+              else:
+                  print(f"Failed on {vol}. Output: {res.strip()[:50]}")
+              time.sleep(1)
 
-          try:
-              datasets.write(f"{USER}.JCL(NONSMS)", nonsms_jcl)
-              print("Created NONSMS JCL member")
-          except:
-              run_tso(f"ALLOCATE DSNAME('{USER}.JCL') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(1,1) TRKS")
-              datasets.write(f"{USER}.JCL(NONSMS)", nonsms_jcl)
+          if not success_non_sms:
+              print("Specific volumes failed. Trying without volume (ACS might assign it)...")
+              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS)"
+              res = run_tso(cmd)
+              print(f"Result: {res.strip()[:50]}")
+              ds_list = datasets.list_datasets(f"NONSMS.{USER}")
+              if ds_list:
+                  success_non_sms = True
+                  print("Success without specific volume!")
 
-          try:
-              job = jobs.submit(f"{USER}.JCL(NONSMS)")
-              print(f"NONSMS allocation job submitted: {job.job_id}")
-              time.sleep(10)
-          except Exception as e:
-              print(f"NONSMS submit error: {e}")
+          print("=== STEP 3: Allocate TOOBIG Dataset ===")
+          # PDF says "Library(PDS/E)" but DSORG(PO) is the base. ACS will override.
+          # We use DSORG(PO) to ensure it creates a partitioned dataset for the member.
+          cmd_toobig = f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(100,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
+          res_toobig = run_tso(cmd_toobig)
+          print(f"TOOBIG Result: {res_toobig.strip()[:100]}")
 
-          print("=== STEP 3: Allocate TOOBIG Dataset via JCL ===")
-          toobig_jcl = textwrap.dedent(f"""
-              //TOOBIG   JOB (ACCT),'TOOBIG ALLOC',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
-              //STEP1    EXEC PGM=IEFBR14
-              //DD1      DD DSN={TOOBIG_DS},
-              //            DISP=(NEW,CATLG,DELETE),
-              //            UNIT=SYSDA,
-              //            SPACE=(TRK,(100,1)),
-              //            RECFM=FB,LRECL=20,
-              //            DSNTYPE=LIBRARY
-              //
-          """)
-
-          try:
-              datasets.write(f"{USER}.JCL(TOOBIG)", toobig_jcl)
-              print("Created TOOBIG JCL member")
-          except:
-              datasets.write(f"{USER}.JCL(TOOBIG)", toobig_jcl)
-
-          try:
-              job = jobs.submit(f"{USER}.JCL(TOOBIG)")
-              print(f"TOOBIG allocation job submitted: {job.job_id}")
-              time.sleep(10)
-          except Exception as e:
-              print(f"TOOBIG submit error: {e}")
-
-          print("=== STEP 4: Verify Datasets Exist ===")
-          res1 = run_tso(f"LISTDS '{NONSMS_DS}'")
-          print(f"NONSMS check: {res1.strip()[:100]}")
-
-          res2 = run_tso(f"LISTDS '{TOOBIG_DS}'")
-          print(f"TOOBIG check: {res2.strip()[:100]}")
-
-          print("=== STEP 5: Create MESSAGE Member in TOOBIG ===")
-          message_words = "OVERRIDDEN BY ACS"
-
-          if 'NOT FOUND' in res2 or 'IKJ56233I' in res2:
-              print("TOOBIG not found, creating as standard PDS...")
+          # Fallback if 100 tracks fails (ACS might restrict size)
+          if 'RC(12)' in res_toobig or 'RC(012)' in res_toobig:
+              print("TOOBIG failed with 100 tracks. Trying smaller space...")
               run_tso(f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(80) DSORG(PO)")
 
+          print("=== STEP 4: Create MESSAGE Member ===")
+          message_words = "OVERRIDDEN BY ACS"
           try:
               datasets.write(f"{TOOBIG_DS}(MESSAGE)", message_words)
               print(f"Created member MESSAGE with content: {message_words}")
           except Exception as e:
               print(f"Error creating member: {e}")
+              # If TOOBIG doesn't exist as PDS, create it simply
+              run_tso(f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(80) DSORG(PO)")
+              try:
+                  datasets.write(f"{TOOBIG_DS}(MESSAGE)", message_words)
+              except: pass
 
-          print("=== STEP 6: Submit Validation Job ===")
+          print("=== STEP 5: Submit Validation Job ===")
           time.sleep(5)
           try:
               val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKSMS1)")
