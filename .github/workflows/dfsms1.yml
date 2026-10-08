@@ -29,33 +29,55 @@ jobs:
           except: pass
           time.sleep(2)
 
-          print("=== STEP 2: Allocate NONSMS Dataset via JCL ===")
-          # Try JCL with STORCLAS='' (empty string) - this is the correct JCL syntax
-          # Try multiple volumes
-          volumes = ['ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005',
-                     'ZXP006', 'ZXP007', 'ZXP008', 'ZXP009', 'ZXP010']
+          print("=== STEP 2: Find Non-SMS Volume via JCL ===")
+          # Try common non-SMS volumes. 
+          # CRITICAL: Use STORCLAS= (blank) for non-SMS allocation in JCL.
+          volumes_to_try = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005', 
+                            'ZXP006', 'ZXP007', 'ZXP008', 'ZXP009', 'ZXP010', 'WORK01', 'USER01']
           
           success = False
-          for vol in volumes:
-              print(f"Trying volume {vol}...")
+          for vol in volumes_to_try:
+              print(f"\n--- Trying volume {vol} ---")
+              # JCL with STORCLAS= (blank) to force non-SMS
               nonsms_jcl = textwrap.dedent(f"""
-                  //NONSMS   JOB (ACCT),'NONSMS ALLOC',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
+                  //NONSMS   JOB (ACCT),'NONSMS',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
                   //STEP1    EXEC PGM=IEFBR14
                   //DD1      DD DSN={NONSMS_DS},
                   //            DISP=(NEW,CATLG,DELETE),
                   //            UNIT=SYSDA,
                   //            SPACE=(TRK,(5,1)),
                   //            RECFM=FB,LRECL=20,DSORG=PS,
-                  //            STORCLAS='',
+                  //            STORCLAS=,
                   //            VOL=SER={vol}
                   //
               """)
               
               try:
-                  datasets.write(f"{USER}.JCL(NONSM{vol[-3:]})", nonsms_jcl)
-                  job = jobs.submit(f"{USER}.JCL(NONSM{vol[-3:]})")
-                  print(f"Submitted job for {vol}: {job.job_id}")
-                  time.sleep(10)
+                  # Write JCL member
+                  member_name = f"NONSM{vol[:4]}"
+                  datasets.write(f"{USER}.JCL({member_name})", nonsms_jcl)
+                  
+                  # Submit job
+                  job = jobs.submit(f"{USER}.JCL({member_name})")
+                  job_id = job.job_id
+                  print(f"Submitted job {job_id} for volume {vol}")
+                  
+                  # Wait for job to complete
+                  time.sleep(15)
+                  
+                  # Read job output (JES log) to see errors
+                  print(f"Reading output for {job_id}...")
+                  try:
+                      # read_output returns a list of dicts: [{'ddname': '...', 'content': '...'}]
+                      output_list = jobs.read_output(job_id)
+                      for item in output_list:
+                          ddname = item.get('ddname', '')
+                          content = item.get('content', '')
+                          # Print JESMSGLG and JESYSMSG which contain errors
+                          if 'JES' in ddname or 'SYS' in ddname:
+                              print(f"[{ddname}]: {content[:500]}") # Print first 500 chars
+                  except Exception as e:
+                      print(f"Could not read output: {e}")
                   
                   # Check if dataset exists
                   ds_list = datasets.list_datasets(NONSMS_DS)
@@ -64,53 +86,43 @@ jobs:
                       success = True
                       break
                   else:
-                      print(f"Failed on {vol}")
+                      print(f"Failed on {vol}. Dataset not created.")
               except Exception as e:
                   print(f"Error with {vol}: {e}")
-              time.sleep(2)
+              time.sleep(3)
 
           if not success:
-              print("All specific volumes failed. Trying without volume...")
-              nonsms_jcl_novol = textwrap.dedent(f"""
-                  //NONSMS   JOB (ACCT),'NONSMS ALLOC',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
-                  //STEP1    EXEC PGM=IEFBR14
-                  //DD1      DD DSN={NONSMS_DS},
-                  //            DISP=(NEW,CATLG,DELETE),
-                  //            UNIT=SYSDA,
-                  //            SPACE=(TRK,(5,1)),
-                  //            RECFM=FB,LRECL=20,DSORG=PS,
-                  //            STORCLAS=''
-                  //
-              """)
-              try:
-                  datasets.write(f"{USER}.JCL(NONSMSNV)", nonsms_jcl_novol)
-                  job = jobs.submit(f"{USER}.JCL(NONSMSNV)")
-                  print(f"Submitted job without volume: {job.job_id}")
-                  time.sleep(10)
-                  ds_list = datasets.list_datasets(NONSMS_DS)
-                  if ds_list:
-                      success = True
-                      print("Success without specific volume!")
-              except Exception as e:
-                  print(f"Error without volume: {e}")
+              print("\nWARNING: Could not find non-SMS volume. Trying without STORCLAS parameter...")
+              # Fallback: Try without STORCLAS parameter at all
+              for vol in ['ZXP000', 'ZXP001', 'ZXP002']:
+                  print(f"Trying {vol} without STORCLAS...")
+                  nonsms_jcl2 = textwrap.dedent(f"""
+                      //NONSMS   JOB (ACCT),'NONSMS',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
+                      //STEP1    EXEC PGM=IEFBR14
+                      //DD1      DD DSN={NONSMS_DS},
+                      //            DISP=(NEW,CATLG,DELETE),
+                      //            UNIT=SYSDA,
+                      //            SPACE=(TRK,(5,1)),
+                      //            RECFM=FB,LRECL=20,DSORG=PS,
+                      //            VOL=SER={vol}
+                      //
+                  """)
+                  try:
+                      member_name = f"NONSM2{vol[:4]}"
+                      datasets.write(f"{USER}.JCL({member_name})", nonsms_jcl2)
+                      job = jobs.submit(f"{USER}.JCL({member_name})")
+                      time.sleep(10)
+                      ds_list = datasets.list_datasets(NONSMS_DS)
+                      if ds_list:
+                          print(f"SUCCESS with {vol} (no STORCLAS)!")
+                          success = True
+                          break
+                  except Exception as e:
+                      print(f"Error: {e}")
 
-          if not success:
-              print("WARNING: NONSMS dataset not created. Trying TSO ALLOCATE with STORCLAS('')...")
-              # Last resort: try TSO with STORCLAS('') - single quotes with nothing inside
-              for vol in ['ZXP001', 'ZXP002', 'ZXP003']:
-                  cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) STORCLAS('') VOLUME({vol})"
-                  res = subprocess.run(f'tso "{cmd}"', shell=True, capture_output=True, encoding='latin-1', errors='replace')
-                  print(f"TSO attempt {vol}: {res.stdout.strip()[:100]}")
-                  ds_list = datasets.list_datasets(NONSMS_DS)
-                  if ds_list:
-                      success = True
-                      print(f"TSO SUCCESS with {vol}!")
-                      break
-                  time.sleep(2)
-
-          print("=== STEP 3: Allocate TOOBIG Dataset ===")
+          print("\n=== STEP 3: Allocate TOOBIG Dataset ===")
           toobig_jcl = textwrap.dedent(f"""
-              //TOOBIG   JOB (ACCT),'TOOBIG ALLOC',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
+              //TOOBIG   JOB (ACCT),'TOOBIG',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
               //STEP1    EXEC PGM=IEFBR14
               //DD1      DD DSN={TOOBIG_DS},
               //            DISP=(NEW,CATLG,DELETE),
