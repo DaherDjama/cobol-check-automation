@@ -4,100 +4,77 @@ on:
   workflow_dispatch:
 
 jobs:
-  dfsms1-fix:
+  dfsms1-spy:
     runs-on: ubuntu-latest
     steps:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
 
-      - name: Create Python script for DFSMS1
+      - name: Create Spy Script
         run: |
-          cat > dfsms1.py << 'PYEOF'
+          cat > spy.py << 'PYEOF'
           import subprocess
-          import time
-          from zoautil_py import datasets, jobs
+          from zoautil_py import datasets
 
           def run_tso(cmd):
               full_cmd = f'tso "{cmd}"'
               res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
+          print("=== PHASE 1: Find ACS Source Code ===")
+          # List all datasets starting with ZXP.PUBLIC
+          ds_list = datasets.list_datasets("ZXP.PUBLIC.*")
+          print(f"Found datasets: {ds_list}")
+
+          # Look for the source code (members with $)
+          for ds in ds_list:
+              print(f"\nChecking {ds}...")
+              try:
+                  # Try to list members
+                  members = datasets.list_members(ds)
+                  print(f"Members: {members}")
+                  
+                  # Read members that contain $
+                  for m in members:
+                      if '$' in m:
+                          print(f"\n--- READING MEMBER {m} ---")
+                          content = datasets.read(f"{ds}({m})")
+                          print(content)
+                          print(f"--- END MEMBER {m} ---")
+              except Exception as e:
+                  print(f"Error accessing {ds}: {e}")
+
+          print("\n=== PHASE 2: Try Allocation with Discovered Info ===")
+          # Based on PDF, the name is likely NONSMS.Z89674
+          # We will try to allocate it. 
+          # The PDF says "a blank storage class('') results in non-SMS".
+          # If the ACS routine is set up for NONSMS.*, it should handle it.
+          
           USER = "Z89674"
           NONSMS_DS = f"NONSMS.{USER}"
-          TOOBIG_DS = f"{USER}.TOOBIG"
-
-          print("=== STEP 1: Cleanup Old Datasets ===")
+          
+          # Cleanup
           try: datasets.delete(NONSMS_DS)
           except: pass
-          try: datasets.delete(TOOBIG_DS)
-          except: pass
-          time.sleep(1)
 
-          print("=== STEP 2: Find Non-SMS Volume ===")
-          # Try common non-SMS volumes in Z Xplore WITHOUT STORCLAS parameter.
-          # If the volume is non-SMS, this will succeed.
-          volumes = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005', 
-                     'ZXP006', 'ZXP007', 'ZXP008', 'ZXP009', 'ZXP010', 
-                     'WORK01', 'USER01', 'SYSRES', 'RES001', 'VOL001']
-          success = False
+          # Try allocating without volume first (let ACS handle it completely)
+          print("Trying allocation without volume (ACS should handle NONSMS.*)...")
+          cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS)"
+          res = run_tso(cmd)
+          print(f"Result: {res.strip()[:200]}")
           
-          for vol in volumes:
-              print(f"Trying volume {vol}...")
-              # No STORCLAS parameter. If vol is non-SMS, this works.
-              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol})"
-              res = run_tso(cmd)
-              
-              # Check if dataset exists
-              ds_list = datasets.list_datasets(NONSMS_DS)
-              if ds_list:
-                  print(f"SUCCESS with volume {vol}!")
-                  success = True
-                  break
-              else:
-                  print(f"Failed on {vol}")
-              time.sleep(1)
+          ds_check = datasets.list_datasets(NONSMS_DS)
+          if ds_check:
+              print("SUCCESS! Dataset created without specific volume.")
+          else:
+              print("Failed without volume. The ACS source code above should tell us the correct volume.")
 
-          if not success:
-              print("Specific volumes failed. Trying without volume (UNIT=3390)...")
-              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) UNIT(3390)"
-              res = run_tso(cmd)
-              ds_list = datasets.list_datasets(NONSMS_DS)
-              if ds_list:
-                  success = True
-                  print("Success without specific volume!")
-
-          print("=== STEP 3: Allocate TOOBIG Dataset ===")
-          cmd_toobig = f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(100,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
-          res_toobig = run_tso(cmd_toobig)
-          print(f"TOOBIG Result: {res_toobig.strip()[:100]}")
-
-          if 'RC(12)' in res_toobig or 'RC(012)' in res_toobig:
-              print("TOOBIG failed, trying smaller space...")
-              run_tso(f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(80) DSORG(PO)")
-
-          print("=== STEP 4: Create MESSAGE Member ===")
-          message_words = "OVERRIDDEN BY ACS"
-          try:
-              datasets.write(f"{TOOBIG_DS}(MESSAGE)", message_words)
-              print(f"Created member MESSAGE with content: {message_words}")
-          except Exception as e:
-              print(f"Error creating member: {e}")
-
-          print("=== STEP 5: Submit Validation Job ===")
-          time.sleep(3)
-          try:
-              val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKSMS1)")
-              print(f"Validation job submitted: {val_job.job_id}")
-          except Exception as e:
-              print(f"Validation submit error: {e}")
-
-          print("=== DFSMS1 Complete ===")
           PYEOF
 
       - name: Copy script to remote
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no dfsms1.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/dfsms1.py
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no spy.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/spy.py
 
-      - name: Execute automation script
+      - name: Execute Spy Script
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/dfsms1.py"
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/spy.py"
