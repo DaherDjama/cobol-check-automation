@@ -14,16 +14,26 @@ jobs:
         run: |
           cat > find_acs.py << 'PYEOF'
           import subprocess
+          import time
           from zoautil_py import datasets
 
           def run_tso(cmd):
               res = subprocess.run(f'tso "{cmd}"', shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
-          print("=== PHASE 1: Find vendor.parmlib ===")
-          # Search for PARMLIB datasets
-          patterns = ["*.PARMLIB", "ZXP.*.PARMLIB", "SYS1.VENDOR.PARMLIB", "ZXP.PUBLIC.PARMLIB"]
-          for pattern in patterns:
+          print("=== PHASE 1: Find vendor.parmlib and ACS Source ===")
+          
+          # Search for datasets that might contain the source
+          # Note: HLQ cannot be *, so we use specific prefixes
+          search_patterns = [
+              "VENDOR.PARMLIB", 
+              "SYS1.VENDOR.PARMLIB", 
+              "ZXP.VENDOR.PARMLIB",
+              "ZXP.PUBLIC.PARMLIB",
+              "SYS1.PARMLIB"
+          ]
+          
+          for pattern in search_patterns:
               print(f"\nSearching for {pattern}...")
               try:
                   ds_list = datasets.list_datasets(pattern)
@@ -33,7 +43,6 @@ jobs:
                       try:
                           members = datasets.list_members(ds_name)
                           print(f"  Members: {members}")
-                          # Look for members with $ in name
                           for m in members:
                               if '$' in m:
                                   print(f"\n{'='*60}")
@@ -47,23 +56,19 @@ jobs:
               except Exception as e:
                   print(f"Error: {e}")
 
-          print("\n=== PHASE 2: Run D SMS command ===")
-          # Try to run D SMS to find the SCDS name
-          res = run_tso("D SMS")
-          print(f"D SMS Output:\n{res}")
-          
-          res2 = run_tso("D SMS,VOL(*)")
-          print(f"D SMS,VOL(*) Output:\n{res2[:2000]}") # First 2000 chars
+          print("\n=== PHASE 2: Try D SMS via OPERCMDS ===")
+          # D SMS is a console command, try OPERCMDS
+          res = run_tso("OPERCMDS D SMS")
+          print(f"OPERCMDS D SMS Output:\n{res}")
 
-          print("\n=== PHASE 3: Try Common Non-SMS Volumes (No STORCLAS) ===")
+          print("\n=== PHASE 3: Try Short Volume Names ===")
           USER = "Z89674"
           NONSMS_DS = f"NONSMS.{USER}"
           try: datasets.delete(NONSMS_DS)
           except: pass
 
-          # Try volumes without ANY storage class parameter
-          volumes = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005', 
-                     'WORK01', 'USER01', 'SYSRES', 'RES001', 'VOL001', 'TSS001']
+          # Try shorter volume names or common names
+          volumes = ['ZXP1', 'ZXP2', 'ZXP3', 'ZXP4', 'ZXP5', 'ZXP', 'WORK', 'USER', 'SYSRES']
           success = False
           for vol in volumes:
               print(f"Trying {vol}...")
@@ -77,7 +82,7 @@ jobs:
               time.sleep(0.5)
 
           if not success:
-              print("All volumes failed. Waiting for ACS source code analysis.")
+              print("All volumes failed. Waiting for source code analysis.")
 
           PYEOF
 
