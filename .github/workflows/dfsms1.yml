@@ -4,108 +4,97 @@ on:
   workflow_dispatch:
 
 jobs:
-  dfsms1-spy:
+  dfsms1-fix:
     runs-on: ubuntu-latest
     steps:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
 
-      - name: Create Spy Script
+      - name: Create Python script for DFSMS1
         run: |
-          cat > spy.py << 'PYEOF'
+          cat > dfsms1.py << 'PYEOF'
           import subprocess
+          import time
           from zoautil_py import datasets
 
           def run_tso(cmd):
-              res = subprocess.run(f'tso "{cmd}"', shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              full_cmd = f'tso "{cmd}"'
+              res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
-          print("=== PHASE 1: Search for ACS Source Code ===")
-          
-          # Search for datasets that might contain ACS source
-          search_patterns = ["ZXP.PUBLIC.*", "ZXP.*.PARMLIB", "ZXP.*.ACS", "SYS1.PARMLIB"]
-          for pattern in search_patterns:
-              print(f"\nSearching for {pattern}...")
-              try:
-                  ds_list = datasets.list_datasets(pattern)
-                  for ds in ds_list:
-                      ds_name = ds.name if hasattr(ds, 'name') else str(ds)
-                      print(f"Found: {ds_name}")
-                      try:
-                          members = datasets.list_members(ds_name)
-                          print(f"  Members: {members[:10]}...")  # First 10
-                          # Look for members with $ in name
-                          for m in members:
-                              if '$' in m:
-                                  print(f"  *** FOUND $ MEMBER: {m} ***")
-                                  content = datasets.read(f"{ds_name}({m})")
-                                  print(f"  Content:\n{content}")
-                      except Exception as e:
-                          print(f"  Error: {e}")
-              except Exception as e:
-                  print(f"Error: {e}")
-
-          print("\n=== PHASE 2: Read ZXP.PUBLIC.SOURCE Members (look for $ in content) ===")
-          source_ds = "ZXP.PUBLIC.SOURCE"
-          try:
-              members = datasets.list_members(source_ds)
-              print(f"Members: {members}")
-              for m in members:
-                  content = datasets.read(f"{source_ds}({m})")
-                  if '$' in content:
-                      print(f"\n{'='*60}")
-                      print(f"FOUND $ IN MEMBER: {m}")
-                      print(f"{'='*60}")
-                      print(content[:2000])  # First 2000 chars
-                      print(f"{'='*60}\n")
-          except Exception as e:
-              print(f"Error: {e}")
-
-          print("\n=== PHASE 3: Try SDSF /d sms command ===")
-          # Try to run /d sms via SDSF
-          res = run_tso("PROFILE PREFIX(Z89674)")
-          print(f"Profile: {res.strip()[:100]}")
-          
-          # Try different ways to run the command
-          for cmd in ["D SMS,VOL(*)", "/d sms,vol(*)", "D SMS"]:
-              print(f"\nTrying: {cmd}")
-              res = run_tso(cmd)
-              print(f"Result: {res.strip()[:500]}")
-
-          print("\n=== PHASE 4: Try More Volume Names ===")
           USER = "Z89674"
-          NONSMS_DS = f"NONSMS.{USER}"
+          # FIX: Name must match Z*.NONSMS.* pattern and start with ZID
+          NONSMS_DS = f"{USER}.NONSMS.FILE1"
+          TOOBIG_DS = f"{USER}.TOOBIG"
+
+          print("=== STEP 1: Cleanup Old Datasets ===")
           try: datasets.delete(NONSMS_DS)
           except: pass
+          try: datasets.delete(TOOBIG_DS)
+          except: pass
+          time.sleep(1)
 
-          # Try even more volume names
-          volumes = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005',
-                     'ZXP006', 'ZXP007', 'ZXP008', 'ZXP009', 'ZXP010',
-                     'WORK01', 'WORK02', 'USER01', 'USER02', 'SYSRES', 'RES001',
-                     'VOL001', 'VOL002', 'TSS001', 'DB2001', 'CICS01', 'IMS001',
-                     'ZOS001', 'MAIN01', 'DISK01', 'STOR01', 'DATA01']
-          
+          print("=== STEP 2: Allocate NONSMS Dataset ===")
+          # Try volumes ZXP000 to ZXP005
+          # We do NOT specify STORCLAS. The ACS routine sees 'Z89674.NONSMS.*' 
+          # and automatically sets STORCLAS='' (blank) making it non-SMS.
+          volumes = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005']
           success = False
+          
           for vol in volumes:
-              print(f"Trying {vol}...")
+              print(f"Trying volume {vol}...")
+              # DSORG(PS) for Sequential. SPACE(5,1) TRKS. RECFM(F,B) LRECL(20).
               cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol})"
               res = run_tso(cmd)
-              ds_check = datasets.list_datasets(NONSMS_DS)
-              if ds_check:
-                  print(f"SUCCESS with {vol}!")
+              
+              # Check if dataset exists
+              ds_list = datasets.list_datasets(NONSMS_DS)
+              if ds_list:
+                  print(f"SUCCESS with volume {vol}!")
                   success = True
                   break
-              time.sleep(0.5)
+              else:
+                  print(f"Failed on {vol}")
+              time.sleep(1)
 
           if not success:
-              print("All volumes failed. Need to find the correct non-SMS volume from ACS source.")
+              print("WARNING: NONSMS dataset not created. Validator will fail.")
 
+          print("=== STEP 3: Allocate TOOBIG Dataset ===")
+          # SMS-managed. SPACE(100,1) TRKS. DSORG(PO) for PDS (Library).
+          # ACS will override the space.
+          cmd_toobig = f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(100,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
+          res_toobig = run_tso(cmd_toobig)
+          print(f"TOOBIG Result: {res_toobig.strip()[:100]}")
+
+          # Fallback if 100 tracks fails
+          if 'RC(12)' in res_toobig or 'RC(012)' in res_toobig:
+              print("TOOBIG failed, trying smaller space...")
+              run_tso(f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(80) DSORG(PO)")
+
+          print("=== STEP 4: Create MESSAGE Member ===")
+          message_words = "OVERRIDDEN BY ACS"
+          try:
+              datasets.write(f"{TOOBIG_DS}(MESSAGE)", message_words)
+              print(f"Created member MESSAGE with content: {message_words}")
+          except Exception as e:
+              print(f"Error creating member: {e}")
+
+          print("=== STEP 5: Submit Validation Job ===")
+          time.sleep(3)
+          try:
+              val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKSMS1)")
+              print(f"Validation job submitted: {val_job.job_id}")
+          except Exception as e:
+              print(f"Validation submit error: {e}")
+
+          print("=== DFSMS1 Complete ===")
           PYEOF
 
       - name: Copy script to remote
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no spy.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/spy.py
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no dfsms1.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/dfsms1.py
 
-      - name: Execute Spy Script
+      - name: Execute automation script
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/spy.py"
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/dfsms1.py"
