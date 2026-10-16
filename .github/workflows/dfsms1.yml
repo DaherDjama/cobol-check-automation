@@ -15,7 +15,7 @@ jobs:
           cat > dfsms1.py << 'PYEOF'
           import subprocess
           import time
-          from zoautil_py import datasets
+          from zoautil_py import datasets, jobs  # FIX: Added 'jobs' import
 
           def run_tso(cmd):
               full_cmd = f'tso "{cmd}"'
@@ -23,7 +23,7 @@ jobs:
               return res.stdout + res.stderr
 
           USER = "Z89674"
-          # FIX: Name must match Z*.NONSMS.* pattern and start with ZID
+          # FIX: Name MUST start with Z (your ZID) to match ACS filter 'Z*.NONSMS.*'
           NONSMS_DS = f"{USER}.NONSMS.FILE1"
           TOOBIG_DS = f"{USER}.TOOBIG"
 
@@ -35,16 +35,20 @@ jobs:
           time.sleep(1)
 
           print("=== STEP 2: Allocate NONSMS Dataset ===")
-          # Try volumes ZXP000 to ZXP005
-          # We do NOT specify STORCLAS. The ACS routine sees 'Z89674.NONSMS.*' 
-          # and automatically sets STORCLAS='' (blank) making it non-SMS.
-          volumes = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005']
+          # The name Z89674.NONSMS.FILE1 triggers the ACS routine to set Storage Class to '' (blank).
+          # This makes it non-SMS. We MUST specify a volume for non-SMS datasets.
+          # We try a wide range of ZXP volumes.
+          volumes = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005', 
+                     'ZXP0', 'ZXP00', 'ZXP1', 'ZXP2', 'ZXP3', 'ZXP4', 'ZXP5',
+                     'ZXP', 'WORK01', 'USER01']
           success = False
           
           for vol in volumes:
               print(f"Trying volume {vol}...")
-              # DSORG(PS) for Sequential. SPACE(5,1) TRKS. RECFM(F,B) LRECL(20).
+              # DSORG(PS) = Sequential. SPACE(5,1) TRKS. RECFM(F,B) LRECL(20).
+              # We do NOT specify STORCLAS. The ACS routine handles it based on the name.
               cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol})"
+              print(f"Command: {cmd}") # Print command for debugging
               res = run_tso(cmd)
               
               # Check if dataset exists
