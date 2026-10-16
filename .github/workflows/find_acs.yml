@@ -1,0 +1,90 @@
+name: Find ACS Source Code
+
+on:
+  workflow_dispatch:
+
+jobs:
+  find-acs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH tools
+        run: sudo apt-get install -y sshpass
+
+      - name: Create Finder Script
+        run: |
+          cat > find_acs.py << 'PYEOF'
+          import subprocess
+          from zoautil_py import datasets
+
+          def run_tso(cmd):
+              res = subprocess.run(f'tso "{cmd}"', shell=True, capture_output=True, encoding='latin-1', errors='replace')
+              return res.stdout + res.stderr
+
+          print("=== PHASE 1: Find vendor.parmlib ===")
+          # Search for PARMLIB datasets
+          patterns = ["*.PARMLIB", "ZXP.*.PARMLIB", "SYS1.VENDOR.PARMLIB", "ZXP.PUBLIC.PARMLIB"]
+          for pattern in patterns:
+              print(f"\nSearching for {pattern}...")
+              try:
+                  ds_list = datasets.list_datasets(pattern)
+                  for ds in ds_list:
+                      ds_name = ds.name if hasattr(ds, 'name') else str(ds)
+                      print(f"Found dataset: {ds_name}")
+                      try:
+                          members = datasets.list_members(ds_name)
+                          print(f"  Members: {members}")
+                          # Look for members with $ in name
+                          for m in members:
+                              if '$' in m:
+                                  print(f"\n{'='*60}")
+                                  print(f"FOUND $ MEMBER: {m} in {ds_name}")
+                                  print(f"{'='*60}")
+                                  content = datasets.read(f"{ds_name}({m})")
+                                  print(content)
+                                  print(f"{'='*60}\n")
+                      except Exception as e:
+                          print(f"  Error reading members: {e}")
+              except Exception as e:
+                  print(f"Error: {e}")
+
+          print("\n=== PHASE 2: Run D SMS command ===")
+          # Try to run D SMS to find the SCDS name
+          res = run_tso("D SMS")
+          print(f"D SMS Output:\n{res}")
+          
+          res2 = run_tso("D SMS,VOL(*)")
+          print(f"D SMS,VOL(*) Output:\n{res2[:2000]}") # First 2000 chars
+
+          print("\n=== PHASE 3: Try Common Non-SMS Volumes (No STORCLAS) ===")
+          USER = "Z89674"
+          NONSMS_DS = f"NONSMS.{USER}"
+          try: datasets.delete(NONSMS_DS)
+          except: pass
+
+          # Try volumes without ANY storage class parameter
+          volumes = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005', 
+                     'WORK01', 'USER01', 'SYSRES', 'RES001', 'VOL001', 'TSS001']
+          success = False
+          for vol in volumes:
+              print(f"Trying {vol}...")
+              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol})"
+              res = run_tso(cmd)
+              ds_check = datasets.list_datasets(NONSMS_DS)
+              if ds_check:
+                  print(f"SUCCESS with {vol}!")
+                  success = True
+                  break
+              time.sleep(0.5)
+
+          if not success:
+              print("All volumes failed. Waiting for ACS source code analysis.")
+
+          PYEOF
+
+      - name: Copy script to remote
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no find_acs.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/find_acs.py
+
+      - name: Execute Finder Script
+        run: |
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/find_acs.py"
