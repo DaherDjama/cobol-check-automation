@@ -1,95 +1,82 @@
-name: Find ACS Source Code
+name: Read ACS Source Code
 
 on:
   workflow_dispatch:
 
 jobs:
-  find-acs:
+  read-acs:
     runs-on: ubuntu-latest
     steps:
       - name: Install SSH tools
         run: sudo apt-get install -y sshpass
 
-      - name: Create Finder Script
+      - name: Create ACS Reader Script
         run: |
-          cat > find_acs.py << 'PYEOF'
-          import subprocess
-          import time
+          cat > read_acs.py << 'PYEOF'
           from zoautil_py import datasets
 
+          print("=== Reading All ACS Members from VENDOR.PARMLIB ===")
+          source_ds = "VENDOR.PARMLIB"
+          
+          # The three ACS members with $ in their names
+          acs_members = ['AC$DATAC', 'AC$STORC', 'AC$STORG']
+          
+          for member in acs_members:
+              print(f"\n{'='*70}")
+              print(f"READING MEMBER: {member}")
+              print(f"{'='*70}")
+              try:
+                  content = datasets.read(f"{source_ds}({member})")
+                  print(content)
+              except Exception as e:
+                  print(f"Error reading {member}: {e}")
+              print(f"{'='*70}\n")
+
+          print("=== Now Trying Allocation with NONSMS.Z89674 ===")
+          import subprocess
           def run_tso(cmd):
               res = subprocess.run(f'tso "{cmd}"', shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
-          print("=== PHASE 1: Find vendor.parmlib and ACS Source ===")
-          
-          # Search for datasets that might contain the source
-          # Note: HLQ cannot be *, so we use specific prefixes
-          search_patterns = [
-              "VENDOR.PARMLIB", 
-              "SYS1.VENDOR.PARMLIB", 
-              "ZXP.VENDOR.PARMLIB",
-              "ZXP.PUBLIC.PARMLIB",
-              "SYS1.PARMLIB"
-          ]
-          
-          for pattern in search_patterns:
-              print(f"\nSearching for {pattern}...")
-              try:
-                  ds_list = datasets.list_datasets(pattern)
-                  for ds in ds_list:
-                      ds_name = ds.name if hasattr(ds, 'name') else str(ds)
-                      print(f"Found dataset: {ds_name}")
-                      try:
-                          members = datasets.list_members(ds_name)
-                          print(f"  Members: {members}")
-                          for m in members:
-                              if '$' in m:
-                                  print(f"\n{'='*60}")
-                                  print(f"FOUND $ MEMBER: {m} in {ds_name}")
-                                  print(f"{'='*60}")
-                                  content = datasets.read(f"{ds_name}({m})")
-                                  print(content)
-                                  print(f"{'='*60}\n")
-                      except Exception as e:
-                          print(f"  Error reading members: {e}")
-              except Exception as e:
-                  print(f"Error: {e}")
-
-          print("\n=== PHASE 2: Try D SMS via OPERCMDS ===")
-          # D SMS is a console command, try OPERCMDS
-          res = run_tso("OPERCMDS D SMS")
-          print(f"OPERCMDS D SMS Output:\n{res}")
-
-          print("\n=== PHASE 3: Try Short Volume Names ===")
           USER = "Z89674"
           NONSMS_DS = f"NONSMS.{USER}"
+          
+          # Cleanup
           try: datasets.delete(NONSMS_DS)
           except: pass
 
-          # Try shorter volume names or common names
-          volumes = ['ZXP1', 'ZXP2', 'ZXP3', 'ZXP4', 'ZXP5', 'ZXP', 'WORK', 'USER', 'SYSRES']
-          success = False
-          for vol in volumes:
-              print(f"Trying {vol}...")
-              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol})"
-              res = run_tso(cmd)
-              ds_check = datasets.list_datasets(NONSMS_DS)
-              if ds_check:
-                  print(f"SUCCESS with {vol}!")
-                  success = True
-                  break
-              time.sleep(0.5)
-
-          if not success:
-              print("All volumes failed. Waiting for source code analysis.")
+          # Try allocation with STORCLAS('') (blank) - no volume specified
+          print("\n1. Trying without volume, STORCLAS('')...")
+          cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) STORCLAS('')"
+          res = run_tso(cmd)
+          print(f"Result: {res.strip()[:200]}")
+          
+          ds_check = datasets.list_datasets(NONSMS_DS)
+          if ds_check:
+              print("SUCCESS! Dataset created.")
+          else:
+              print("Failed. Trying with volumes...")
+              # Try various volume names
+              volumes = ['ZXP0', 'ZXP00', 'ZXP000', 'ZXP001', 'ZXP002', 'ZXP003',
+                         'ZXP1', 'ZXP2', 'ZXP3', 'WORK0', 'WORK00', 'WORK01',
+                         'USER0', 'USER00', 'USER01', 'SGNONE', 'NONE']
+              for vol in volumes:
+                  print(f"  Trying {vol}...")
+                  cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol}) STORCLAS('')"
+                  res = run_tso(cmd)
+                  ds_check = datasets.list_datasets(NONSMS_DS)
+                  if ds_check:
+                      print(f"  SUCCESS with volume {vol}!")
+                      break
+                  import time
+                  time.sleep(0.5)
 
           PYEOF
 
       - name: Copy script to remote
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no find_acs.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/find_acs.py
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp -o StrictHostKeyChecking=no read_acs.py ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/z/z89674/read_acs.py
 
-      - name: Execute Finder Script
+      - name: Execute ACS Reader
         run: |
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/find_acs.py"
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "source /etc/profile 2>/dev/null || true; python3 /z/z89674/read_acs.py"
