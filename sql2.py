@@ -56,17 +56,21 @@ try:
     csv_lines = ["LASTNAME,FIRSTNME,MIDINIT,SALARY"]
     lines = full_output.split('\n')
     
-    # Look for the actual SQL output header
+    # Look for the actual DSNTEP2 output header
+    # DSNTEP2 output format: column names on one line, dashes on next line, then data
+    # The header line has LASTNAME but NOT "SELECT" and NOT commas
     in_sql_data = False
     found_header = False
     
     for i, line in enumerate(lines):
         line_stripped = line.strip()
         
-        # Look for the DSNTEP2 column header line
-        if 'LASTNAME' in line_stripped and 'FIRSTNME' in line_stripped and 'MIDINIT' in line_stripped and 'SALARY' in line_stripped:
+        # Look for DSNTEP2 column header: contains LASTNAME but NOT "SELECT" and NOT commas
+        if ('LASTNAME' in line_stripped and 'FIRSTNME' in line_stripped and 
+            'MIDINIT' in line_stripped and 'SALARY' in line_stripped and
+            'SELECT' not in line_stripped and ',' not in line_stripped):
             found_header = True
-            print(f"Found SQL header at line {i}: {line_stripped}")
+            print(f"Found DSNTEP2 header at line {i}: {line_stripped}")
             continue
         
         # After header, look for separator line (dashes)
@@ -87,7 +91,12 @@ try:
             if not line_stripped:
                 continue
             
-            # Parse the data row
+            # Skip lines that are just dashes
+            if all(c in '-= ' for c in line_stripped):
+                continue
+            
+            # Parse the data row - DSNTEP2 uses fixed-width columns
+            # Split by whitespace
             parts = line_stripped.split()
             if len(parts) >= 4:
                 try:
@@ -153,9 +162,11 @@ FETCH FIRST 5 ROWS ONLY;
             for i, line in enumerate(lines2):
                 line_stripped = line.strip()
                 
-                if 'LASTNAME' in line_stripped and 'FIRSTNME' in line_stripped and 'MIDINIT' in line_stripped and 'SALARY' in line_stripped:
+                if ('LASTNAME' in line_stripped and 'FIRSTNME' in line_stripped and 
+                    'MIDINIT' in line_stripped and 'SALARY' in line_stripped and
+                    'SELECT' not in line_stripped and ',' not in line_stripped):
                     found_header2 = True
-                    print(f"Found SQL header at line {i}: {line_stripped}")
+                    print(f"Found DSNTEP2 header at line {i}: {line_stripped}")
                     continue
                 
                 if found_header2 and not in_sql_data2:
@@ -169,6 +180,9 @@ FETCH FIRST 5 ROWS ONLY;
                         break
                     
                     if not line_stripped:
+                        continue
+                    
+                    if all(c in '-= ' for c in line_stripped):
                         continue
                     
                     parts = line_stripped.split()
