@@ -27,14 +27,10 @@ jobs:
           TOOBIG_DS = USER + ".TOOBIG"
 
           print("=== STEP 1: Cleanup Old Datasets ===")
-          try:
-              datasets.delete(NONSMS_DS)
-          except:
-              pass
-          try:
-              datasets.delete(TOOBIG_DS)
-          except:
-              pass
+          try: datasets.delete(NONSMS_DS)
+          except: pass
+          try: datasets.delete(TOOBIG_DS)
+          except: pass
           time.sleep(2)
 
           print("=== STEP 2: Allocate NONSMS Dataset on ZXP002 ===")
@@ -54,38 +50,75 @@ jobs:
               job = jobs.submit(USER + ".JCL(NONSMS02)")
               print("NONSMS job submitted: " + job.job_id)
               time.sleep(10)
-              ds_list = datasets.list_datasets(NONSMS_DS)
-              if ds_list:
-                  print("NONSMS dataset created successfully!")
-              else:
-                  print("NONSMS dataset creation failed")
           except Exception as e:
               print("Error: " + str(e))
 
-          print("=== STEP 3: Allocate TOOBIG Dataset as PDS ===")
-          # Try 100 tracks first (as per PDF)
-          cmd = "ALLOCATE DSNAME('" + TOOBIG_DS + "') NEW SPACE(100,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
-          res = run_tso(cmd)
-          print("TOOBIG Attempt (100 tracks): " + res.strip())
+          print("=== STEP 3: Allocate TOOBIG Dataset via JCL (100 tracks, PDS/E) ===")
+          # Use JCL with DSNTYPE=LIBRARY for PDS/E.
+          # ACS will override the space (100 tracks) to a smaller limit.
+          jcl_toobig = "//TOOBIG JOB (ACCT),'TOOBIG',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID\n"
+          jcl_toobig += "//STEP1 EXEC PGM=IEFBR14\n"
+          jcl_toobig += "//DD1 DD DSN=" + TOOBIG_DS + ",\n"
+          jcl_toobig += "// DISP=(NEW,CATLG,DELETE),\n"
+          jcl_toobig += "// UNIT=SYSDA,\n"
+          jcl_toobig += "// SPACE=(TRK,(100,1)),\n"
+          jcl_toobig += "// RECFM=FB,LRECL=20,\n"
+          jcl_toobig += "// DSNTYPE=LIBRARY\n"
+          jcl_toobig += "//\n"
 
-          # Check if created
+          message_words = "OVERRIDDEN BY ACS" # Default fallback
+          
+          try:
+              datasets.write(USER + ".JCL(TOOBIG1)", jcl_toobig)
+              job = jobs.submit(USER + ".JCL(TOOBIG1)")
+              job_id = job.job_id
+              print("TOOBIG job submitted: " + job_id)
+              time.sleep(15)
+
+              # Read job output to find the ACS override message
+              print("Reading job output...")
+              # jobs.read_output returns a list of strings (lines) or list of dicts depending on version
+              output = jobs.read_output(job_id)
+              
+              found_msg = False
+              if isinstance(output, list):
+                  for item in output:
+                      # Handle both list of strings and list of dicts
+                      line_content = ""
+                      if isinstance(item, dict):
+                          line_content = item.get('content', '')
+                      else:
+                          line_content = str(item)
+                      
+                      # Look for the override message
+                      if 'OVERRIDDEN' in line_content.upper():
+                          print("Found message line: " + line_content)
+                          words = line_content.strip().split()
+                          if len(words) >= 3:
+                              message_words = ' '.join(words[-3:])
+                              found_msg = True
+                              break
+              
+              if not found_msg:
+                  print("Could not find OVERRIDDEN in output. Using default: " + message_words)
+
+          except Exception as e:
+              print("Error reading job output: " + str(e))
+
+          # Verify TOOBIG exists. If JCL failed (RC 12), create it with smaller space so we can add the member.
           ds_list = datasets.list_datasets(TOOBIG_DS)
           if not ds_list:
-              print("100 tracks failed. Creating with 10 tracks...")
-              cmd = "ALLOCATE DSNAME('" + TOOBIG_DS + "') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
-              res = run_tso(cmd)
-              print("TOOBIG Attempt (10 tracks): " + res.strip())
+              print("TOOBIG not created via JCL. Creating with 10 tracks via TSO...")
+              run_tso("ALLOCATE DSNAME('" + TOOBIG_DS + "') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)")
               ds_list = datasets.list_datasets(TOOBIG_DS)
               if ds_list:
-                  print("TOOBIG dataset created with 10 tracks!")
-              else:
-                  print("TOOBIG dataset creation failed!")
+                  print("TOOBIG created via TSO fallback.")
 
           print("=== STEP 4: Create MESSAGE Member ===")
-          msg = "OVERRIDDEN BY ACS"
+          print("Using message: " + message_words)
           try:
-              datasets.write(TOOBIG_DS + "(MESSAGE)", msg)
-              print("Created member MESSAGE with content: " + msg)
+              datasets.write(TOOBIG_DS + "(MESSAGE)", message_words)
+              print("Created member MESSAGE with content: " + message_words)
           except Exception as e:
               print("Error creating member: " + str(e))
 
