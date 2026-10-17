@@ -14,16 +14,29 @@ except:
 
 print("=== STEP 2: Submit SQL via JCL ===")
 
-# Try multiple STEPLIB options - Z Xplore uses DSN1110
-steplib_options = ['DSN1110.SDSNLOAD', 'DSN1210.SDSNLOAD', 'DSN1310.SDSNLOAD', 'DB2.SDSNLOAD']
+# Try multiple STEPLIB options - including no STEPLIB
+steplib_options = [
+    'DSN1010.SDSNLOAD',
+    'DSN910.SDSNLOAD',
+    'DSN810.SDSNLOAD',
+    'DSN.SDSNLOAD',
+    'SYS1.SDSNLOAD',
+    'DSNC10.SDSNLOAD',
+    None  # No STEPLIB - DSNTEP2 might be in linklist
+]
 
 for steplib in steplib_options:
-    print(f"\nTrying STEPLIB: {steplib}")
+    steplib_str = steplib if steplib else "NONE (linklist)"
+    print(f"\nTrying STEPLIB: {steplib_str}")
+    
+    if steplib:
+        steplib_dd = f"//STEPLIB  DD DISP=SHR,DSN={steplib}\n"
+    else:
+        steplib_dd = ""
     
     sql_jcl = f"""//SQLRUN   JOB (ACCT),'SQL2',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
 //STEP1    EXEC PGM=IKJEFT01,DYNAMNBR=20
-//STEPLIB  DD DISP=SHR,DSN={steplib}
-//SYSTSPRT DD SYSOUT=*
+{steplib_dd}//SYSTSPRT DD SYSOUT=*
 //SYSTSIN  DD *
  DSN SYSTEM(DBDG)
  RUN PROGRAM(DSNTEP2) PLAN(DSNTEP2)
@@ -55,12 +68,22 @@ FETCH FIRST 5 ROWS ONLY;
         else:
             full_output = str(output)
         
-        # Check if job succeeded
-        if 'NOT FOUND' in full_output or 'JCL ERROR' in full_output:
-            print(f"Job failed with STEPLIB {steplib}")
+        # Check for specific errors
+        if 'NOT FOUND' in full_output:
+            print(f"Job failed: Dataset not found with STEPLIB {steplib_str}")
+            # Print the error line
+            for line in full_output.split('\n'):
+                if 'NOT FOUND' in line or 'IEF450' in line:
+                    print(f"  Error: {line.strip()}")
+            continue
+        elif 'ABEND' in full_output:
+            print(f"Job failed: ABEND with STEPLIB {steplib_str}")
+            continue
+        elif 'JCL ERROR' in full_output:
+            print(f"Job failed: JCL ERROR with STEPLIB {steplib_str}")
             continue
         
-        print(f"Job succeeded with STEPLIB: {steplib}")
+        print(f"Job succeeded with STEPLIB: {steplib_str}")
         print(f"Total output length: {len(full_output)}")
         
         print("\n=== STEP 4: Parse DSNTEP2 Output ===")
@@ -146,7 +169,7 @@ FETCH FIRST 5 ROWS ONLY;
             print("No data found, trying next STEPLIB...")
     
     except Exception as e:
-        print(f"Error with {steplib}: {e}")
+        print(f"Error with {steplib_str}: {e}")
         continue
 
 print("\n=== SQL2 Automation Finished ===")
