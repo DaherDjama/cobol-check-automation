@@ -38,7 +38,6 @@ jobs:
           time.sleep(2)
 
           print("=== STEP 2: Allocate NONSMS Dataset on ZXP002 ===")
-          # We know ZXP002 works from previous run
           jcl_nonsms = "//NONSMS JOB (ACCT),'NONSMS',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID\n"
           jcl_nonsms += "//STEP1 EXEC PGM=IEFBR14\n"
           jcl_nonsms += "//DD1 DD DSN=" + NONSMS_DS + ",\n"
@@ -64,10 +63,7 @@ jobs:
               print("Error: " + str(e))
 
           print("=== STEP 3: Allocate TOOBIG Dataset as PDS ===")
-          # The PDF says "Library(PDS/E)". We use DSORG(PO) to create a PDS.
-          # We try 100 tracks first (as per PDF). If it fails (RC 12), we try 10 tracks 
-          # just to ensure the PDS exists so we can add the member.
-          
+          # Try 100 tracks first (as per PDF)
           cmd = "ALLOCATE DSNAME('" + TOOBIG_DS + "') NEW SPACE(100,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
           res = run_tso(cmd)
           print("TOOBIG Attempt (100 tracks): " + res.strip())
@@ -75,24 +71,23 @@ jobs:
           # Check if created
           ds_list = datasets.list_datasets(TOOBIG_DS)
           if not ds_list:
-              print("100 tracks failed. Trying 10 tracks to ensure PDS creation...")
+              print("100 tracks failed. Creating with 10 tracks...")
               cmd = "ALLOCATE DSNAME('" + TOOBIG_DS + "') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
               res = run_tso(cmd)
               print("TOOBIG Attempt (10 tracks): " + res.strip())
+              ds_list = datasets.list_datasets(TOOBIG_DS)
+              if ds_list:
+                  print("TOOBIG dataset created with 10 tracks!")
+              else:
+                  print("TOOBIG dataset creation failed!")
 
           print("=== STEP 4: Create MESSAGE Member ===")
-          # The PDF says "Note the last three words... attributes were overridden".
-          # The standard message is "SPACE OVERRIDDEN BY ACS". Last 3 words: "OVERRIDDEN BY ACS".
           msg = "OVERRIDDEN BY ACS"
-          
           try:
-              # This writes the member "MESSAGE" into the PDS "Z89674.TOOBIG"
               datasets.write(TOOBIG_DS + "(MESSAGE)", msg)
               print("Created member MESSAGE with content: " + msg)
           except Exception as e:
               print("Error creating member: " + str(e))
-              # If it fails, the dataset might still be sequential. 
-              # But we tried to create it as PO above.
 
           print("=== STEP 5: Submit Validation Job ===")
           time.sleep(3)
