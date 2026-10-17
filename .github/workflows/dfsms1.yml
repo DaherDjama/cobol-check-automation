@@ -15,82 +15,76 @@ jobs:
           cat > dfsms1.py << 'PYEOF'
           import subprocess
           import time
-          from zoautil_py import datasets, jobs  # FIX: Added 'jobs' import
+          from zoautil_py import datasets, jobs
 
           def run_tso(cmd):
-              full_cmd = f'tso "{cmd}"'
+              full_cmd = 'tso "' + cmd + '"'
               res = subprocess.run(full_cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
               return res.stdout + res.stderr
 
           USER = "Z89674"
-          # FIX: Name MUST start with Z (your ZID) to match ACS filter 'Z*.NONSMS.*'
-          NONSMS_DS = f"{USER}.NONSMS.FILE1"
-          TOOBIG_DS = f"{USER}.TOOBIG"
+          NONSMS_DS = USER + ".NONSMS.FILE1"
+          TOOBIG_DS = USER + ".TOOBIG"
 
           print("=== STEP 1: Cleanup Old Datasets ===")
-          try: datasets.delete(NONSMS_DS)
-          except: pass
-          try: datasets.delete(TOOBIG_DS)
-          except: pass
+          try:
+              datasets.delete(NONSMS_DS)
+          except:
+              pass
+          try:
+              datasets.delete(TOOBIG_DS)
+          except:
+              pass
           time.sleep(1)
 
           print("=== STEP 2: Allocate NONSMS Dataset ===")
-          # The name Z89674.NONSMS.FILE1 triggers the ACS routine to set Storage Class to '' (blank).
-          # This makes it non-SMS. We MUST specify a volume for non-SMS datasets.
-          # We try a wide range of ZXP volumes.
-          volumes = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005', 
+          volumes = ['ZXP000', 'ZXP001', 'ZXP002', 'ZXP003', 'ZXP004', 'ZXP005',
+                     'ZXP006', 'ZXP007', 'ZXP008', 'ZXP009', 'ZXP010',
                      'ZXP0', 'ZXP00', 'ZXP1', 'ZXP2', 'ZXP3', 'ZXP4', 'ZXP5',
-                     'ZXP', 'WORK01', 'USER01']
+                     'ZXP', 'WORK01', 'USER01', 'SYSRES', 'RES001', 'VOL001',
+                     'TSS001', 'DB2001', 'CICS01', 'IMS001', 'ZOS001', 'MAIN01']
           success = False
-          
+
           for vol in volumes:
-              print(f"Trying volume {vol}...")
-              # DSORG(PS) = Sequential. SPACE(5,1) TRKS. RECFM(F,B) LRECL(20).
-              # We do NOT specify STORCLAS. The ACS routine handles it based on the name.
-              cmd = f"ALLOCATE DSNAME('{NONSMS_DS}') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME({vol})"
-              print(f"Command: {cmd}") # Print command for debugging
+              print("Trying volume " + vol + "...")
+              cmd = "ALLOCATE DSNAME('" + NONSMS_DS + "') NEW SPACE(5,1) TRKS RECFM(F,B) LRECL(20) DSORG(PS) VOLUME(" + vol + ")"
               res = run_tso(cmd)
-              
-              # Check if dataset exists
               ds_list = datasets.list_datasets(NONSMS_DS)
               if ds_list:
-                  print(f"SUCCESS with volume {vol}!")
+                  print("SUCCESS with volume " + vol + "!")
                   success = True
                   break
               else:
-                  print(f"Failed on {vol}")
+                  print("Failed on " + vol)
               time.sleep(1)
 
           if not success:
               print("WARNING: NONSMS dataset not created. Validator will fail.")
 
           print("=== STEP 3: Allocate TOOBIG Dataset ===")
-          # SMS-managed. SPACE(100,1) TRKS. DSORG(PO) for PDS (Library).
-          # ACS will override the space.
-          cmd_toobig = f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(100,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
+          cmd_toobig = "ALLOCATE DSNAME('" + TOOBIG_DS + "') NEW SPACE(100,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
           res_toobig = run_tso(cmd_toobig)
-          print(f"TOOBIG Result: {res_toobig.strip()[:100]}")
+          print("TOOBIG Result: " + res_toobig.strip()[:100])
 
-          # Fallback if 100 tracks fails
           if 'RC(12)' in res_toobig or 'RC(012)' in res_toobig:
               print("TOOBIG failed, trying smaller space...")
-              run_tso(f"ALLOCATE DSNAME('{TOOBIG_DS}') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(80) DSORG(PO)")
+              run_tso("ALLOCATE DSNAME('" + TOOBIG_DS + "') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(80) DSORG(PO)")
 
           print("=== STEP 4: Create MESSAGE Member ===")
           message_words = "OVERRIDDEN BY ACS"
           try:
-              datasets.write(f"{TOOBIG_DS}(MESSAGE)", message_words)
-              print(f"Created member MESSAGE with content: {message_words}")
+              datasets.write(TOOBIG_DS + "(MESSAGE)", message_words)
+              print("Created member MESSAGE with content: " + message_words)
           except Exception as e:
-              print(f"Error creating member: {e}")
+              print("Error creating member: " + str(e))
 
           print("=== STEP 5: Submit Validation Job ===")
           time.sleep(3)
           try:
               val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKSMS1)")
-              print(f"Validation job submitted: {val_job.job_id}")
+              print("Validation job submitted: " + val_job.job_id)
           except Exception as e:
-              print(f"Validation submit error: {e}")
+              print("Validation submit error: " + str(e))
 
           print("=== DFSMS1 Complete ===")
           PYEOF
