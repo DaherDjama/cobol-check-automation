@@ -55,40 +55,56 @@ try:
     # Parse the CSV from the full output
     csv_lines = ["LASTNAME,FIRSTNME,MIDINIT,SALARY"]
     lines = full_output.split('\n')
-    in_data = False
     
-    for line in lines:
+    # Look for the actual SQL output header
+    in_sql_data = False
+    found_header = False
+    
+    for i, line in enumerate(lines):
         line_stripped = line.strip()
         
-        if not line_stripped:
+        # Look for the DSNTEP2 column header line
+        if 'LASTNAME' in line_stripped and 'FIRSTNME' in line_stripped and 'MIDINIT' in line_stripped and 'SALARY' in line_stripped:
+            found_header = True
+            print(f"Found SQL header at line {i}: {line_stripped}")
             continue
         
-        # Look for separator line (dashes)
-        if '---' in line_stripped and 'LASTNAME' not in line_stripped:
-            in_data = True
-            continue
+        # After header, look for separator line (dashes)
+        if found_header and not in_sql_data:
+            if '---' in line_stripped or '===' in line_stripped:
+                in_sql_data = True
+                print(f"Found separator at line {i}: {line_stripped}")
+                continue
         
-        # Stop at end markers
-        if 'READY' in line_stripped or 'RETURN' in line_stripped or 'DSNE' in line_stripped:
-            break
-        
-        if in_data:
+        # Parse data rows
+        if in_sql_data:
+            # Stop at end markers
+            if 'READY' in line_stripped or 'RETURN' in line_stripped or 'DSNE' in line_stripped or 'END OF' in line_stripped:
+                print(f"End marker at line {i}: {line_stripped}")
+                break
+            
+            # Skip empty lines
+            if not line_stripped:
+                continue
+            
+            # Parse the data row
             parts = line_stripped.split()
             if len(parts) >= 4:
                 try:
+                    # Last part should be salary (number)
                     salary = parts[-1].replace(',', '')
                     float(salary)
                     
                     if len(parts) == 4:
                         lastname, firstnme, midinit, salary = parts
-                    else:
+                    elif len(parts) > 4:
                         lastname = parts[0]
                         firstnme = parts[1]
                         midinit = parts[2]
                         salary = parts[-1]
                     
                     csv_lines.append(f"{lastname},{firstnme},{midinit},{salary}")
-                    print(f"Parsed: {lastname},{firstnme},{midinit},{salary}")
+                    print(f"Parsed row: {lastname},{firstnme},{midinit},{salary}")
                 except ValueError:
                     pass
     
@@ -131,22 +147,30 @@ FETCH FIRST 5 ROWS ONLY;
                 full_output2 = str(output2)
             
             lines2 = full_output2.split('\n')
-            in_data2 = False
+            in_sql_data2 = False
+            found_header2 = False
             
-            for line in lines2:
+            for i, line in enumerate(lines2):
                 line_stripped = line.strip()
                 
-                if not line_stripped:
+                if 'LASTNAME' in line_stripped and 'FIRSTNME' in line_stripped and 'MIDINIT' in line_stripped and 'SALARY' in line_stripped:
+                    found_header2 = True
+                    print(f"Found SQL header at line {i}: {line_stripped}")
                     continue
                 
-                if '---' in line_stripped and 'LASTNAME' not in line_stripped:
-                    in_data2 = True
-                    continue
+                if found_header2 and not in_sql_data2:
+                    if '---' in line_stripped or '===' in line_stripped:
+                        in_sql_data2 = True
+                        print(f"Found separator at line {i}: {line_stripped}")
+                        continue
                 
-                if 'READY' in line_stripped or 'RETURN' in line_stripped or 'DSNE' in line_stripped:
-                    break
-                
-                if in_data2:
+                if in_sql_data2:
+                    if 'READY' in line_stripped or 'RETURN' in line_stripped or 'DSNE' in line_stripped or 'END OF' in line_stripped:
+                        break
+                    
+                    if not line_stripped:
+                        continue
+                    
                     parts = line_stripped.split()
                     if len(parts) >= 4:
                         try:
@@ -162,7 +186,7 @@ FETCH FIRST 5 ROWS ONLY;
                                 salary = parts[-1]
                             
                             csv_lines.append(f"{lastname},{firstnme},{midinit},{salary}")
-                            print(f"Parsed (alt): {lastname},{firstnme},{midinit},{salary}")
+                            print(f"Parsed row (alt): {lastname},{firstnme},{midinit},{salary}")
                         except ValueError:
                             pass
             
