@@ -12,88 +12,136 @@ try:
 except:
     pass
 
-print("=== STEP 2: Run SQL Query via TSO ===")
-# Use TSO DSNTEP2 directly instead of JCL
-sql_query = """SELECT LASTNAME, FIRSTNME, MIDINIT, SALARY
+print("=== STEP 2: Submit SQL via JCL ===")
+sql_jcl = f"""//SQLRUN   JOB (ACCT),'SQL2',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
+//STEP1    EXEC PGM=IKJEFT01,DYNAMNBR=20
+//STEPLIB  DD DISP=SHR,DSN=DSN1210.SDSNLOAD
+//SYSTSPRT DD SYSOUT=*
+//SYSTSIN  DD *
+ DSN SYSTEM(DBDG)
+ RUN PROGRAM(DSNTEP2) PLAN(DSNTEP2)
+//SYSPRINT DD SYSOUT=*
+//SYSUDUMP DD SYSOUT=*
+//SYSIN    DD *
+SELECT LASTNAME, FIRSTNME, MIDINIT, SALARY
 FROM IBMUSER.EMP
 WHERE JOB NOT IN ('MANAGER', 'PRES')
 ORDER BY SALARY DESC
-FETCH FIRST 5 ROWS ONLY;"""
+FETCH FIRST 5 ROWS ONLY;
+/*
+"""
 
-# Create a temporary dataset with the SQL query
-sql_ds = f"{USER}.SQLTMP"
 try:
-    datasets.delete(sql_ds)
-except:
-    pass
-
-datasets.write(sql_ds, sql_query)
-print(f"SQL query written to {sql_ds}")
-
-# Run DSNTEP2 via TSO
-cmd = f'tso "DSN SYSTEM(DBDG) RUN PROGRAM(DSNTEP2) PLAN(DSNTEP2) LIBRARY(\'DSN1210.RUNLIB.LOAD\')" < /z/{USER.lower()}/sqltmp'
-print(f"Running command: {cmd}")
-
-result = subprocess.run(cmd, shell=True, capture_output=True, encoding='latin-1', errors='replace')
-output = result.stdout + result.stderr
-
-print("=== STEP 3: Parse Output ===")
-print("Raw output:")
-print(output[:2000])
-
-lines = output.split('\n')
-csv_lines = ["LASTNAME,FIRSTNME,MIDINIT,SALARY"]
-in_data = False
-
-for line in lines:
-    line_stripped = line.strip()
+    datasets.write(f"{USER}.JCL(SQLRUN)", sql_jcl)
+    job = jobs.submit(f"{USER}.JCL(SQLRUN)")
+    job_id = job.job_id
+    print(f"SQL job submitted: {job_id}")
     
-    if not line_stripped:
-        continue
+    # Wait longer for job to complete
+    print("Waiting for job to complete...")
+    time.sleep(20)
     
-    if '---' in line_stripped and 'LASTNAME' not in line_stripped:
-        in_data = True
-        continue
-    
-    if 'READY' in line_stripped or 'RETURN' in line_stripped or 'DSNE' in line_stripped:
-        break
-    
-    if in_data:
-        parts = line_stripped.split()
-        if len(parts) >= 4:
-            try:
-                salary = parts[-1].replace(',', '')
-                float(salary)
-                
-                if len(parts) == 4:
-                    lastname, firstnme, midinit, salary = parts
-                else:
-                    lastname = parts[0]
-                    firstnme = parts[1]
-                    midinit = parts[2]
-                    salary = parts[-1]
-                
-                csv_lines.append(f"{lastname},{firstnme},{midinit},{salary}")
-                print(f"Parsed: {lastname},{firstnme},{midinit},{salary}")
-            except ValueError:
-                pass
+    # Check job status
+    try:
+        job_status = jobs.read_output(job_id)
+        print(f"Job output type: {type(job_status)}")
+        print(f"Job output length: {len(job_status)}")
+        
+        # Extract SYSPRINT content
+        sysprint = ""
+        for item in job_status:
+            if isinstance(item, dict):
+                ddname = item.get('ddname', '')
+                content = item.get('byte-content', item.get('content', ''))
+                print(f"DD: {ddname}, Content length: {len(content)}")
+                if 'SYSPRINT' in ddname.upper():
+                    sysprint = content if isinstance(content, str) else content.decode('latin-1', errors='replace')
+            else:
+                print(f"Item type: {type(item)}")
+        
+        print(f"\nSYSPRINT content length: {len(sysprint)}")
+        if sysprint:
+            print("First 2000 chars of SYSPRINT:")
+            print(sysprint[:2000])
+        else:
+            print("SYSPRINT is empty!")
+            
+    except Exception as e:
+        print(f"Error reading job output: {e}")
+        import traceback
+        traceback.print_exc()
+        sysprint = ""
 
-csv_content = '\n'.join(csv_lines)
-print(f"\nGenerated CSV ({len(csv_lines)} lines):")
-print(csv_content)
+    print("\n=== STEP 3: Parse Output ===")
+    csv_lines = ["LASTNAME,FIRSTNME,MIDINIT,SALARY"]
+    
+    if sysprint:
+        lines = sysprint.split('\n')
+        in_data = False
+        
+        for line in lines:
+            line_stripped = line.strip()
+            
+            if not line_stripped:
+                continue
+            
+            # Look for separator line
+            if '---' in line_stripped and 'LASTNAME' not in line_stripped:
+                in_data = True
+                continue
+            
+            # Stop at end markers
+            if 'READY' in line_stripped or 'RETURN' in line_stripped or 'DSNE' in line_stripped:
+                break
+            
+            if in_data:
+                parts = line_stripped.split()
+                if len(parts) >= 4:
+                    try:
+                        salary = parts[-1].replace(',', '')
+                        float(salary)
+                        
+                        if len(parts) == 4:
+                            lastname, firstnme, midinit, salary = parts
+                        else:
+                            lastname = parts[0]
+                            firstnme = parts[1]
+                            midinit = parts[2]
+                            salary = parts[-1]
+                        
+                        csv_lines.append(f"{lastname},{firstnme},{midinit},{salary}")
+                        print(f"Parsed: {lastname},{firstnme},{midinit},{salary}")
+                    except ValueError:
+                        pass
+    
+    csv_content = '\n'.join(csv_lines)
+    print(f"\nGenerated CSV ({len(csv_lines)} lines):")
+    print(csv_content)
+    
+    if len(csv_lines) <= 1:
+        print("\nWARNING: No data rows found!")
+        print("This could mean:")
+        print("1. The query returned no results (wrong JOB values)")
+        print("2. The output parsing failed")
+        print("3. The JCL job failed")
 
-print("=== STEP 4: Write to Dataset ===")
-try:
-    datasets.write(f"{OUTPUT_DS}({MEMBER})", csv_content)
-    print(f"Successfully wrote to {OUTPUT_DS}({MEMBER})")
+    print("\n=== STEP 4: Write to Dataset ===")
+    try:
+        datasets.write(f"{OUTPUT_DS}({MEMBER})", csv_content)
+        print(f"Successfully wrote to {OUTPUT_DS}({MEMBER})")
+    except Exception as e:
+        print(f"Error writing: {e}")
+        subprocess.run(f'tso "ALLOCATE DSNAME(\'{OUTPUT_DS}\') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(10,1) TRKS"', shell=True)
+        datasets.write(f"{OUTPUT_DS}({MEMBER})", csv_content)
+
+    print("\n=== STEP 5: Submit Validator ===")
+    time.sleep(3)
+    val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKSQL2)")
+    print(f"Validation job submitted: {val_job.job_id}")
+
 except Exception as e:
     print(f"Error: {e}")
-    subprocess.run(f'tso "ALLOCATE DSNAME(\'{OUTPUT_DS}\') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(10,1) TRKS"', shell=True)
-    datasets.write(f"{OUTPUT_DS}({MEMBER})", csv_content)
+    import traceback
+    traceback.print_exc()
 
-print("=== STEP 5: Submit Validator ===")
-time.sleep(3)
-val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKSQL2)")
-print(f"Validation job submitted: {val_job.job_id}")
-
-print("=== SQL2 Complete ===")
+print("\n=== SQL2 Complete ===")
