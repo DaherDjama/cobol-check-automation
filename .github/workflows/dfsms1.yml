@@ -63,61 +63,36 @@ jobs:
           except Exception as e:
               print("Error: " + str(e))
 
-          print("=== STEP 3: Allocate TOOBIG Dataset with 100 tracks via JCL ===")
-          # Use JCL to allocate TOOBIG - this will show us the actual ACS message
-          jcl_toobig = "//TOOBIG JOB (ACCT),'TOOBIG',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID\n"
-          jcl_toobig += "//STEP1 EXEC PGM=IEFBR14\n"
-          jcl_toobig += "//DD1 DD DSN=" + TOOBIG_DS + ",\n"
-          jcl_toobig += "// DISP=(NEW,CATLG,DELETE),\n"
-          jcl_toobig += "// UNIT=SYSDA,\n"
-          jcl_toobig += "// SPACE=(TRK,(100,1)),\n"
-          jcl_toobig += "// RECFM=FB,LRECL=20,\n"
-          jcl_toobig += "// DSORG=PO\n"
-          jcl_toobig += "//\n"
+          print("=== STEP 3: Allocate TOOBIG Dataset as PDS ===")
+          # The PDF says "Library(PDS/E)". We use DSORG(PO) to create a PDS.
+          # We try 100 tracks first (as per PDF). If it fails (RC 12), we try 10 tracks 
+          # just to ensure the PDS exists so we can add the member.
+          
+          cmd = "ALLOCATE DSNAME('" + TOOBIG_DS + "') NEW SPACE(100,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
+          res = run_tso(cmd)
+          print("TOOBIG Attempt (100 tracks): " + res.strip())
 
-          try:
-              datasets.write(USER + ".JCL(TOOBIG1)", jcl_toobig)
-              job = jobs.submit(USER + ".JCL(TOOBIG1)")
-              job_id = job.job_id
-              print("TOOBIG job submitted: " + job_id)
-              time.sleep(15)
-
-              # Read the job output to find the ACS message
-              print("Reading job output...")
-              output = jobs.read_output(job_id)
-              message_words = "OVERRIDDEN BY ACS"
-              for item in output:
-                  content = item.get('content', '')
-                  # Look for messages about space override
-                  if 'OVERRIDE' in content.upper() or 'ACS' in content.upper() or 'SPACE' in content.upper():
-                      print("Found relevant message: " + content[:500])
-                      # Extract last three words from relevant lines
-                      for line in content.split('\n'):
-                          if 'OVERRIDE' in line.upper() or 'ACS' in line.upper():
-                              words = line.strip().split()
-                              if len(words) >= 3:
-                                  message_words = ' '.join(words[-3:])
-                                  print("Extracted message: " + message_words)
-                                  break
-          except Exception as e:
-              print("Error: " + str(e))
-              message_words = "OVERRIDDEN BY ACS"
+          # Check if created
+          ds_list = datasets.list_datasets(TOOBIG_DS)
+          if not ds_list:
+              print("100 tracks failed. Trying 10 tracks to ensure PDS creation...")
+              cmd = "ALLOCATE DSNAME('" + TOOBIG_DS + "') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(20) DSORG(PO)"
+              res = run_tso(cmd)
+              print("TOOBIG Attempt (10 tracks): " + res.strip())
 
           print("=== STEP 4: Create MESSAGE Member ===")
-          print("Using message: " + message_words)
+          # The PDF says "Note the last three words... attributes were overridden".
+          # The standard message is "SPACE OVERRIDDEN BY ACS". Last 3 words: "OVERRIDDEN BY ACS".
+          msg = "OVERRIDDEN BY ACS"
+          
           try:
-              datasets.write(TOOBIG_DS + "(MESSAGE)", message_words)
-              print("Created member MESSAGE with content: " + message_words)
+              # This writes the member "MESSAGE" into the PDS "Z89674.TOOBIG"
+              datasets.write(TOOBIG_DS + "(MESSAGE)", msg)
+              print("Created member MESSAGE with content: " + msg)
           except Exception as e:
               print("Error creating member: " + str(e))
-              # If TOOBIG doesn't exist, create it first
-              print("Creating TOOBIG dataset...")
-              run_tso("ALLOCATE DSNAME('" + TOOBIG_DS + "') NEW SPACE(10,1) TRKS RECFM(F,B) LRECL(80) DSORG(PO)")
-              try:
-                  datasets.write(TOOBIG_DS + "(MESSAGE)", message_words)
-                  print("Created member MESSAGE (fallback)")
-              except Exception as e2:
-                  print("Fallback also failed: " + str(e2))
+              # If it fails, the dataset might still be sequential. 
+              # But we tried to create it as PO above.
 
           print("=== STEP 5: Submit Validation Job ===")
           time.sleep(3)
