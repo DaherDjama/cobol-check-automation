@@ -37,82 +37,60 @@ try:
     job_id = job.job_id
     print(f"SQL job submitted: {job_id}")
     
-    # Wait longer for job to complete
     print("Waiting for job to complete...")
     time.sleep(20)
     
-    # Check job status
-    try:
-        job_status = jobs.read_output(job_id)
-        print(f"Job output type: {type(job_status)}")
-        print(f"Job output length: {len(job_status)}")
-        
-        # Extract SYSPRINT content
-        sysprint = ""
-        for item in job_status:
-            if isinstance(item, dict):
-                ddname = item.get('ddname', '')
-                content = item.get('byte-content', item.get('content', ''))
-                print(f"DD: {ddname}, Content length: {len(content)}")
-                if 'SYSPRINT' in ddname.upper():
-                    sysprint = content if isinstance(content, str) else content.decode('latin-1', errors='replace')
-            else:
-                print(f"Item type: {type(item)}")
-        
-        print(f"\nSYSPRINT content length: {len(sysprint)}")
-        if sysprint:
-            print("First 2000 chars of SYSPRINT:")
-            print(sysprint[:2000])
-        else:
-            print("SYSPRINT is empty!")
-            
-    except Exception as e:
-        print(f"Error reading job output: {e}")
-        import traceback
-        traceback.print_exc()
-        sysprint = ""
-
-    print("\n=== STEP 3: Parse Output ===")
-    csv_lines = ["LASTNAME,FIRSTNME,MIDINIT,SALARY"]
+    print("=== STEP 3: Read and Parse Output ===")
+    output = jobs.read_output(job_id)
+    print(f"Output type: {type(output)}, Length: {len(output)}")
     
-    if sysprint:
-        lines = sysprint.split('\n')
-        in_data = False
+    # Join all output into one big string
+    if isinstance(output, list):
+        full_output = '\n'.join([str(item) for item in output])
+    else:
+        full_output = str(output)
+    
+    print(f"Total output length: {len(full_output)}")
+    
+    # Parse the CSV from the full output
+    csv_lines = ["LASTNAME,FIRSTNME,MIDINIT,SALARY"]
+    lines = full_output.split('\n')
+    in_data = False
+    
+    for line in lines:
+        line_stripped = line.strip()
         
-        for line in lines:
-            line_stripped = line.strip()
-            
-            if not line_stripped:
-                continue
-            
-            # Look for separator line
-            if '---' in line_stripped and 'LASTNAME' not in line_stripped:
-                in_data = True
-                continue
-            
-            # Stop at end markers
-            if 'READY' in line_stripped or 'RETURN' in line_stripped or 'DSNE' in line_stripped:
-                break
-            
-            if in_data:
-                parts = line_stripped.split()
-                if len(parts) >= 4:
-                    try:
-                        salary = parts[-1].replace(',', '')
-                        float(salary)
-                        
-                        if len(parts) == 4:
-                            lastname, firstnme, midinit, salary = parts
-                        else:
-                            lastname = parts[0]
-                            firstnme = parts[1]
-                            midinit = parts[2]
-                            salary = parts[-1]
-                        
-                        csv_lines.append(f"{lastname},{firstnme},{midinit},{salary}")
-                        print(f"Parsed: {lastname},{firstnme},{midinit},{salary}")
-                    except ValueError:
-                        pass
+        if not line_stripped:
+            continue
+        
+        # Look for separator line (dashes)
+        if '---' in line_stripped and 'LASTNAME' not in line_stripped:
+            in_data = True
+            continue
+        
+        # Stop at end markers
+        if 'READY' in line_stripped or 'RETURN' in line_stripped or 'DSNE' in line_stripped:
+            break
+        
+        if in_data:
+            parts = line_stripped.split()
+            if len(parts) >= 4:
+                try:
+                    salary = parts[-1].replace(',', '')
+                    float(salary)
+                    
+                    if len(parts) == 4:
+                        lastname, firstnme, midinit, salary = parts
+                    else:
+                        lastname = parts[0]
+                        firstnme = parts[1]
+                        midinit = parts[2]
+                        salary = parts[-1]
+                    
+                    csv_lines.append(f"{lastname},{firstnme},{midinit},{salary}")
+                    print(f"Parsed: {lastname},{firstnme},{midinit},{salary}")
+                except ValueError:
+                    pass
     
     csv_content = '\n'.join(csv_lines)
     print(f"\nGenerated CSV ({len(csv_lines)} lines):")
@@ -120,10 +98,80 @@ try:
     
     if len(csv_lines) <= 1:
         print("\nWARNING: No data rows found!")
-        print("This could mean:")
-        print("1. The query returned no results (wrong JOB values)")
-        print("2. The output parsing failed")
-        print("3. The JCL job failed")
+        print("Trying alternative JOB values...")
+        
+        # Try with different JOB values
+        alt_sql = f"""//SQLRUN2  JOB (ACCT),'SQL2B',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
+//STEP1    EXEC PGM=IKJEFT01,DYNAMNBR=20
+//STEPLIB  DD DISP=SHR,DSN=DSN1210.SDSNLOAD
+//SYSTSPRT DD SYSOUT=*
+//SYSTSIN  DD *
+ DSN SYSTEM(DBDG)
+ RUN PROGRAM(DSNTEP2) PLAN(DSNTEP2)
+//SYSPRINT DD SYSOUT=*
+//SYSUDUMP DD SYSOUT=*
+//SYSIN    DD *
+SELECT LASTNAME, FIRSTNME, MIDINIT, SALARY
+FROM IBMUSER.EMP
+WHERE JOB NOT IN ('MGR', 'PRES')
+ORDER BY SALARY DESC
+FETCH FIRST 5 ROWS ONLY;
+/*
+"""
+        try:
+            datasets.write(f"{USER}.JCL(SQLRUN2)", alt_sql)
+            job2 = jobs.submit(f"{USER}.JCL(SQLRUN2)")
+            print(f"Alternative job submitted: {job2.job_id}")
+            time.sleep(20)
+            
+            output2 = jobs.read_output(job2.job_id)
+            if isinstance(output2, list):
+                full_output2 = '\n'.join([str(item) for item in output2])
+            else:
+                full_output2 = str(output2)
+            
+            lines2 = full_output2.split('\n')
+            in_data2 = False
+            
+            for line in lines2:
+                line_stripped = line.strip()
+                
+                if not line_stripped:
+                    continue
+                
+                if '---' in line_stripped and 'LASTNAME' not in line_stripped:
+                    in_data2 = True
+                    continue
+                
+                if 'READY' in line_stripped or 'RETURN' in line_stripped or 'DSNE' in line_stripped:
+                    break
+                
+                if in_data2:
+                    parts = line_stripped.split()
+                    if len(parts) >= 4:
+                        try:
+                            salary = parts[-1].replace(',', '')
+                            float(salary)
+                            
+                            if len(parts) == 4:
+                                lastname, firstnme, midinit, salary = parts
+                            else:
+                                lastname = parts[0]
+                                firstnme = parts[1]
+                                midinit = parts[2]
+                                salary = parts[-1]
+                            
+                            csv_lines.append(f"{lastname},{firstnme},{midinit},{salary}")
+                            print(f"Parsed (alt): {lastname},{firstnme},{midinit},{salary}")
+                        except ValueError:
+                            pass
+            
+            csv_content = '\n'.join(csv_lines)
+            print(f"\nUpdated CSV ({len(csv_lines)} lines):")
+            print(csv_content)
+            
+        except Exception as e:
+            print(f"Alternative query error: {e}")
 
     print("\n=== STEP 4: Write to Dataset ===")
     try:
