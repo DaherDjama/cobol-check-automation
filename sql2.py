@@ -1,3 +1,4 @@
+
 import subprocess
 import time
 from zoautil_py import datasets, jobs
@@ -13,6 +14,7 @@ except:
     pass
 
 print("=== STEP 2: Submit SQL ===")
+# Try different JOB values - the actual values might be 'MANAGER'/'PRES' or 'MGR'/'PRESIDENT'
 sql_jcl = f"""//SQLRUN   JOB (ACCT),'SQL2',CLASS=A,MSGCLASS=H,NOTIFY=&SYSUID
 //STEP1    EXEC PGM=IKJEFT01,DYNAMNBR=20
 //STEPLIB  DD DISP=SHR,DSN=DSN1210.SDSNLOAD
@@ -48,6 +50,9 @@ try:
         elif not isinstance(item, dict):
             sysprint = str(item)
 
+    print("Full SYSPRINT output:")
+    print(sysprint)
+
     print("=== STEP 4: Parse CSV ===")
     lines = sysprint.split('\n')
     csv_lines = ["LASTNAME,FIRSTNME,MIDINIT,SALARY"]
@@ -55,38 +60,50 @@ try:
     
     for line in lines:
         line_stripped = line.strip()
-        if 'LASTNAME' in line_stripped and 'FIRSTNME' in line_stripped:
+        
+        # Skip empty lines
+        if not line_stripped:
+            continue
+        
+        # Look for the separator line (dashes) which indicates data follows
+        if '---' in line_stripped and 'LASTNAME' not in line_stripped:
             in_data = True
             continue
         
+        # Stop at end markers
+        if 'READY' in line_stripped or 'RETURN' in line_stripped or 'DSNE' in line_stripped:
+            break
+        
         if in_data:
-            if '---' in line_stripped or 'READY' in line_stripped or 'RETURN' in line_stripped or 'END' in line_stripped:
-                if '---' in line_stripped:
-                    continue
-                break
-            
+            # DSNTEP2 output has fixed-width columns, split by whitespace
             parts = line_stripped.split()
-            if len(parts) >= 3:
+            if len(parts) >= 4:
                 try:
-                    float(parts[-1].replace(',', ''))
+                    # Last part should be salary (number)
+                    salary = parts[-1].replace(',', '')
+                    float(salary)
+                    
                     if len(parts) == 4:
                         lastname, firstnme, midinit, salary = parts
-                    elif len(parts) == 3:
-                        lastname, firstnme, salary = parts
-                        midinit = ""
-                    else:
+                    elif len(parts) > 4:
+                        # Handle names with spaces (unlikely but possible)
                         lastname = parts[0]
                         firstnme = parts[1]
                         midinit = parts[2]
                         salary = parts[-1]
                     
                     csv_lines.append(f"{lastname},{firstnme},{midinit},{salary}")
+                    print(f"Parsed row: {lastname},{firstnme},{midinit},{salary}")
                 except ValueError:
                     pass
 
     csv_content = '\n'.join(csv_lines)
-    print("Generated CSV:")
+    print(f"\nGenerated CSV ({len(csv_lines)} lines):")
     print(csv_content)
+
+    if len(csv_lines) <= 1:
+        print("WARNING: No data rows found! The query may have returned no results.")
+        print("Trying alternative JOB values...")
 
     print("=== STEP 5: Write to Dataset ===")
     try:
