@@ -1,3 +1,4 @@
+
 import subprocess
 import time
 from zoautil_py import datasets, jobs
@@ -12,22 +13,32 @@ try:
 except:
     pass
 
-print("=== STEP 2: Submit SQL via JCL ===")
+print("=== STEP 2: Find Correct STEPLIB and Submit SQL ===")
 
-# Try multiple STEPLIB options - including no STEPLIB
+# Try multiple STEPLIB options - Z Xplore might use different naming
 steplib_options = [
+    'DSN1110.SDSNLOAD',
+    'DSN1210.SDSNLOAD', 
+    'DSN1310.SDSNLOAD',
     'DSN1010.SDSNLOAD',
     'DSN910.SDSNLOAD',
     'DSN810.SDSNLOAD',
-    'DSN.SDSNLOAD',
+    'DSN.DB2.SDSNLOAD',
+    'DB2.SDSNLOAD',
     'SYS1.SDSNLOAD',
-    'DSNC10.SDSNLOAD',
-    None  # No STEPLIB - DSNTEP2 might be in linklist
+    None  # No STEPLIB - might be in linklist
 ]
 
+success = False
+
 for steplib in steplib_options:
-    steplib_str = steplib if steplib else "NONE (linklist)"
-    print(f"\nTrying STEPLIB: {steplib_str}")
+    if success:
+        break
+        
+    steplib_display = steplib if steplib else "NONE (linklist)"
+    print(f"\n{'='*50}")
+    print(f"Trying STEPLIB: {steplib_display}")
+    print(f"{'='*50}")
     
     if steplib:
         steplib_dd = f"//STEPLIB  DD DISP=SHR,DSN={steplib}\n"
@@ -58,9 +69,9 @@ FETCH FIRST 5 ROWS ONLY;
         print(f"SQL job submitted: {job_id}")
         
         print("Waiting for job to complete...")
-        time.sleep(20)
+        time.sleep(25)
         
-        print("=== STEP 3: Read Job Output ===")
+        print("Reading job output...")
         output = jobs.read_output(job_id)
         
         if isinstance(output, list):
@@ -69,24 +80,24 @@ FETCH FIRST 5 ROWS ONLY;
             full_output = str(output)
         
         # Check for specific errors
-        if 'NOT FOUND' in full_output:
-            print(f"Job failed: Dataset not found with STEPLIB {steplib_str}")
-            # Print the error line
+        if 'NOT FOUND' in full_output and 'DSN' in full_output:
+            print(f"❌ Failed: Dataset not found")
+            # Show the error line
             for line in full_output.split('\n'):
                 if 'NOT FOUND' in line or 'IEF450' in line:
-                    print(f"  Error: {line.strip()}")
+                    print(f"   Error: {line.strip()[:100]}")
             continue
         elif 'ABEND' in full_output:
-            print(f"Job failed: ABEND with STEPLIB {steplib_str}")
+            print(f" Failed: ABEND")
             continue
         elif 'JCL ERROR' in full_output:
-            print(f"Job failed: JCL ERROR with STEPLIB {steplib_str}")
+            print(f"❌ Failed: JCL ERROR")
             continue
         
-        print(f"Job succeeded with STEPLIB: {steplib_str}")
-        print(f"Total output length: {len(full_output)}")
+        print(f"✅ Job succeeded with STEPLIB: {steplib_display}")
+        print(f"Output length: {len(full_output)}")
         
-        print("\n=== STEP 4: Parse DSNTEP2 Output ===")
+        # Parse the output
         csv_lines = ["LASTNAME,FIRSTNME,MIDINIT,SALARY"]
         lines = full_output.split('\n')
         
@@ -99,24 +110,23 @@ FETCH FIRST 5 ROWS ONLY;
             if not line_stripped:
                 continue
             
-            # Look for DSNTEP2 header
+            # Look for DSNTEP2 header (no SELECT, no commas, no JOB)
             if ('LASTNAME' in line_stripped and 'FIRSTNME' in line_stripped and 
                 'MIDINIT' in line_stripped and 'SALARY' in line_stripped and
                 'SELECT' not in line_stripped and ',' not in line_stripped and
                 'JOB' not in line_stripped):
                 header_found = True
-                print(f"Found DSNTEP2 header at line {i}: {line_stripped}")
+                print(f"Found header at line {i}")
                 continue
             
             if header_found and not in_data:
                 if line_stripped.count('-') > 10:
                     in_data = True
-                    print(f"Found separator at line {i}: {line_stripped}")
+                    print(f"Found separator at line {i}")
                     continue
             
             if in_data:
                 if 'READY' in line_stripped or 'RETURN' in line_stripped or 'DSNE' in line_stripped:
-                    print(f"End marker at line {i}: {line_stripped}")
                     break
                 
                 if not line_stripped or line_stripped.count('-') > 10:
@@ -140,7 +150,7 @@ FETCH FIRST 5 ROWS ONLY;
                             salary = parts[-1]
                         
                         csv_lines.append(f"{lastname},{firstnme},{midinit},{salary}")
-                        print(f"Parsed row: {lastname},{firstnme},{midinit},{salary}")
+                        print(f"Parsed: {lastname},{firstnme},{midinit},{salary}")
                     except ValueError:
                         pass
         
@@ -149,27 +159,32 @@ FETCH FIRST 5 ROWS ONLY;
         print(csv_content)
         
         if len(csv_lines) > 1:
-            print("\n=== STEP 5: Write to Dataset ===")
+            success = True
+            
+            print("\n=== STEP 3: Write to Dataset ===")
             try:
                 datasets.write(f"{OUTPUT_DS}({MEMBER})", csv_content)
-                print(f"Successfully wrote to {OUTPUT_DS}({MEMBER})")
+                print(f"✅ Successfully wrote to {OUTPUT_DS}({MEMBER})")
             except Exception as e:
                 print(f"Error writing: {e}")
                 subprocess.run(f'tso "ALLOCATE DSNAME(\'{OUTPUT_DS}\') DSORG(PO) RECFM(F,B) LRECL(80) SPACE(10,1) TRKS"', shell=True)
                 datasets.write(f"{OUTPUT_DS}({MEMBER})", csv_content)
             
-            print("\n=== STEP 6: Submit Validator ===")
+            print("\n=== STEP 4: Submit Validator ===")
             time.sleep(3)
             val_job = jobs.submit("ZXP.PUBLIC.JCL(CHKSQL2)")
             print(f"Validation job submitted: {val_job.job_id}")
             
             print("\n=== SQL2 Complete ===")
-            break
         else:
-            print("No data found, trying next STEPLIB...")
+            print("⚠️ No data rows found with this STEPLIB")
     
     except Exception as e:
-        print(f"Error with {steplib_str}: {e}")
+        print(f"❌ Error with {steplib_display}: {e}")
         continue
 
-print("\n=== SQL2 Automation Finished ===")
+if not success:
+    print("\n❌ All STEPLIB options failed!")
+    print("Please check the logs above for error details.")
+
+print("\n=== Automation Finished ===")
